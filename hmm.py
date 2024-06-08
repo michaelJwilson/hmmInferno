@@ -284,14 +284,14 @@ class HMM(torch.nn.Module):
 
         log_fs = torch.zeros(1 + len(obvs) + 1, len(log_fs_init)).to(self.device)
         log_fs[0] = log_fs_init
-
+        
         # TODO BUG? MetalPerformanceShaders/MPSCore/Types/MPSNDArray.mm:130: failed assertion
         #           `[MPSNDArrayDescriptor sliceDimension:withSubrange:] error: the range
         #           subRange.start + subRange.length does not fit in dimension[1] (12)
         for ii, obv in enumerate(obvs):
-            interim = log_fs[ii][:, None] + self.log_trans.clone()
+            interim = log_fs[ii].clone().unsqueeze(-1) + self.log_trans.clone()
             log_fs[ii + 1] = self.emission(None, obv) + torch.logsumexp(interim, dim=0)
-            
+
         # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_trans[:, 0]
 
@@ -314,8 +314,8 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(rev_obvs[:-1]):
             interim = (
                 self.log_trans.clone()
-                + self.emission(None, obv)[None, :]
-                + log_bs[-(ii + 1), :][None, :]
+                + self.emission(None, obv).unsqueeze(0)
+                + log_bs[-(ii + 1), :].unsqueeze(0)
             )
 
             log_bs[-(ii + 2)] = torch.logsumexp(interim, dim=1)
@@ -384,8 +384,6 @@ class HMM(torch.nn.Module):
         """
         TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
         """
-        unique_obvs = torch.unique(obvs)
-
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         log_evidence_backward, log_backward_array = self.log_backward(obvs)
 
@@ -393,6 +391,8 @@ class HMM(torch.nn.Module):
         log_forward_array = log_forward_array[1:-1]
         log_backward_array = log_backward_array[1:]
 
+        unique_obvs = torch.unique(obvs)
+        
         interim = log_forward_array + log_backward_array - log_evidence_forward
 
         # TODO int?
@@ -412,14 +412,14 @@ class HMM(torch.nn.Module):
         self, obvs, transition_pseudo_counts=None, emission_pseudo_counts=None
     ):
         """
-        TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
         """
         exp_transition_counts = self.exp_transition_counts(
             obvs, transition_pseudo_counts
         )
-        exp_emission_counts = self.exp_emission_counts(obvs, emission_pseudo_counts)
-
         exp_transition_counts /= torch.sum(exp_transition_counts, dim=1).unsqueeze(1)
+
+        # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
+        exp_emission_counts = self.exp_emission_counts(obvs, emission_pseudo_counts)
         exp_emission_counts /= torch.sum(exp_emission_counts, dim=1).unsqueeze(1)
 
         return exp_transition_counts, exp_emission_counts
@@ -458,7 +458,6 @@ if __name__ == "__main__":
 
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
-
     log_evidence_backward, log_backward_array = hmm.log_backward(obvs)
     
     assert log_evidence_forward == log_evidence_backward
@@ -502,4 +501,5 @@ if __name__ == "__main__":
     print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
     print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
     print(f"\n\nDone.\n\n")
+
     
