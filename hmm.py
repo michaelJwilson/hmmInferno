@@ -285,9 +285,6 @@ class HMM(torch.nn.Module):
         log_fs = torch.zeros(1 + len(obvs) + 1, len(log_fs_init)).to(self.device)
         log_fs[0] = log_fs_init
         
-        # TODO BUG? MetalPerformanceShaders/MPSCore/Types/MPSNDArray.mm:130: failed assertion
-        #           `[MPSNDArrayDescriptor sliceDimension:withSubrange:] error: the range
-        #           subRange.start + subRange.length does not fit in dimension[1] (12)
         for ii, obv in enumerate(obvs):
             interim = log_fs[ii].clone().unsqueeze(-1) + self.log_trans.clone()
             log_fs[ii + 1] = self.emission(None, obv) + torch.logsumexp(interim, dim=0)
