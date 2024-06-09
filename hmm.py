@@ -1,4 +1,5 @@
 import torch
+from torch.optim import Adam
 from torch.distributions.negative_binomial import NegativeBinomial
 
 # TODO set seed for cuda / mps
@@ -27,10 +28,7 @@ class CategoricalEmission(torch.nn.Module):
         #    nn.Parameter marks this to be optimised via backprop.
         self.log_em = torch.randn(n_states, n_obvs)
         self.log_em[0, :] = -99.0
-
-
-        # TODO HACK
-        # self.log_em = torch.nn.Parameter(self.log_em)
+        self.log_em = torch.nn.Parameter(self.log_em)
 
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
 
@@ -124,8 +122,7 @@ class HMM(torch.nn.Module):
 
             self.log_trans = log_trans
 
-        # TODO HACK
-        # self.log_trans = torch.nn.Parameter(self.log_trans)
+        self.log_trans = torch.nn.Parameter(self.log_trans)
             
         # NB rows sums to zero, as prob. to transition to any state is unity.
         self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
@@ -424,14 +421,23 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
+    
+    def backprop_training(model):
+        optimizer.zero_grad()
 
+        loss = calc_dkl(logp, logq)
+        loss.backward()
+
+        optimizer.step()
+
+        
 if __name__ == "__main__":
     device = "cpu"
     n_states, n_obvs, n_seq = 4, 4, 10
 
     # NB (n_states * n_obvs) action space.
     hmm = HMM(n_states=n_states, n_obvs=n_obvs, device=device)
-
+    
     # NB Normal(0., 1.) for observed sequence.
     obvs = torch.randint(low=0, high=n_states, size=(n_seq,))
 
@@ -499,4 +505,3 @@ if __name__ == "__main__":
     print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
     print(f"\n\nDone.\n\n")
 
-    
