@@ -477,9 +477,6 @@ class HMM(torch.nn.Module):
             loss.backward()
             
             optimizer.step()
-            
-            if epoch % 10 == 0:
-                logger.debug(f"Epoch {epoch}, Loss: {loss.item()}")
                 
         return n_epochs, self.log_forward_scan(obvs)
                 
@@ -489,7 +486,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     # TODO BUG? must be even?
-    n_seq, device = 4, "cpu"
+    n_seq, device = 4, None
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     casino = Casino(device=device)
@@ -540,7 +537,7 @@ if __name__ == "__main__":
 
     baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
-    torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(obvs, n_epochs=100)
+    torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(obvs, n_epochs=1_000)
     
     # TODO
     # assert torch.allclose(
