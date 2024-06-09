@@ -2,7 +2,7 @@ import torch
 from torch.optim import Adam
 from torch.distributions import negative_binomial
 from utils import get_device
-from casino import CasinoEmission
+from casino import Casino
 
 
 class CategoricalEmission(torch.nn.Module):
@@ -10,6 +10,7 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a booked + n_states hidden states, (0, ...),
     to n_obvs emission types.
     """
+
     def __init__(self, n_states, n_obvs, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -34,6 +35,12 @@ class CategoricalEmission(torch.nn.Module):
 
         return self
 
+    def sample(self, n_seq):
+        # NB no bookend states
+        return torch.randint(
+            low=1, high=1 + self.n_states, size=(n_seq,), dtype=torch.int32, device=self.device
+        )
+
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -44,7 +51,7 @@ class CategoricalEmission(torch.nn.Module):
 
     def validate(self):
         print(f"\nwith emission log probs.:\n{self.log_em}\n")
-        
+
 
 class NegativeBinomial:
     """
@@ -107,17 +114,21 @@ class HMM(torch.nn.Module):
         # self.n_steps = 1 + n_obvs + 1
 
         self.emission_model = emission_model
-        
+
         # NB We start (and end) in the bookend state.  No gradient required.
-        self.log_pi = -99.0 * torch.ones(self.n_states, requires_grad=False, device=self.device)
+        self.log_pi = -99.0 * torch.ones(
+            self.n_states, requires_grad=False, device=self.device
+        )
         self.log_pi[0] = 0.0
 
         if log_trans is None:
-            self.log_trans = torch.randn(self.n_states, self.n_states, device=self.device)
+            self.log_trans = torch.randn(
+                self.n_states, self.n_states, device=self.device
+            )
 
             # NB rows sums to zero, as prob. to transition to any state is unity.
             self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
-            
+
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -252,7 +263,7 @@ class HMM(torch.nn.Module):
             print(obs)
             print(self.emission(None, obs))
             exit(0)
-            
+
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_trans[:, 0], dim=0)
 
@@ -271,7 +282,7 @@ class HMM(torch.nn.Module):
                 + self.emission(None, obv).unsqueeze(0)
                 + log_bs.unsqueeze(0)
             )
-            
+
             log_bs = torch.logsumexp(log_bs, dim=1)
 
         obv = rev_obvs[-1]
@@ -443,17 +454,18 @@ class HMM(torch.nn.Module):
 if __name__ == "__main__":
     n_seq, device = 1_000, "cpu"
 
-    # TODO set seed for cuda / mps                                                                                                                                                                                   
+    # TODO set seed for cuda / mps
     torch.manual_seed(123)
-    
-    # emission = CategoricalEmission(n_states=4, n_obvs=4, device=device)
-    emission = CasinoEmission(device=device)
 
-    obvs = emission.sample(n_seq=n_seq)
-    """
+    categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
+    casino = Casino(device=device)
+
+    obvs = casino.sample(n_seq=n_seq)
+
     # NB (n_states * n_obvs) action space.
-    hmm = HMM(n_states=2, emission_model=casino, log_trans=casino.log_trans, device=device)
-
+    hmm = HMM(n_states=2, emission=categorical, log_trans=None, device=device)
+    
+    """
     # NB hidden states matched to observed time steps.
     # states = torch.randint(low=1, high=(n_states + 1), size=(n_seq,))
     # states = hmm.bookend_states(states).to(device)
@@ -534,4 +546,3 @@ if __name__ == "__main__":
     print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
     """
     print(f"\n\nDone.\n\n")
-

@@ -3,9 +3,9 @@ import numpy as np
 from utils import get_device
 
 
-class CasinoEmission(torch.nn.Module):
+class Casino(torch.nn.Module):
     def __init__(self, device=None):
-        super(CasinoEmission, self).__init__()
+        super(Casino, self).__init__()
 
         # NB includes a bookend state denoted 0.
         self.n_states, self.n_obvs = 3, 6
