@@ -6,18 +6,6 @@ from torch.distributions import negative_binomial
 torch.manual_seed(123)
 
 
-def get_device():
-    # NB mac
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.backends.gpu.is_available():
-        device = torch.device("gpu")
-    else:
-        device = torch.device("cpu")
-
-    return device
-
-
 class CategoricalEmission(torch.nn.Module):
     def __init__(self, n_states, n_obvs, device=None):
         super(CategoricalEmission, self).__init__()
