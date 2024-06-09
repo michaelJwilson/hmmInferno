@@ -51,8 +51,8 @@ class CategoricalEmission(torch.nn.Module):
 
         # TODO HACK
         # NB emit a bookend token from the bookend state.
-        # self.log_em.data[0, :] = -99.0
-        # self.log_em.data[0, 0] =   0.0
+        self.log_em.data[0, :] = -99.0
+        self.log_em.data[0, 0] =   0.0
 
         # NB rows sums to zero, as prob. to emit to any obs. is unity.
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
