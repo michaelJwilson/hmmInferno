@@ -34,19 +34,22 @@ class CategoricalEmission(torch.nn.Module):
         # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
-        # NB number of possible observable states, as opposed to sequence length.
+        # NB number of possible observable classes.
         self.n_obvs = n_obvs
+        
+        logger.info(
+            f"Creating CategoricalEmission with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
+        )
 
-        # NB i)  rows sums to zero, as prob. to emit to any obs. is unity.
-        #    ii) nn.Parameter marks this to be optimised via backprop.
-        #    iii)
         self.log_em = torch.randn(self.n_states, self.n_obvs)
 
-        self.log_em[0, :] = -99.0
+        # NB nn.Parameter marks this to be optimised via torch.
         self.log_em = torch.nn.Parameter(self.log_em)
+
+        # NB rows sums to zero, as prob. to emit to any obs. is unity.
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
 
-        # NB no emission from hidden state.
+        # NB no emission from bookend state.
         self.log_em.data[0, :] = -99.0
 
     def to_device(self, device):
@@ -56,7 +59,7 @@ class CategoricalEmission(torch.nn.Module):
         return self
 
     def sample(self, n_seq):
-        # NB bookends are never observed.  Observed classes are 0-indexed.
+        # NB bookends are never observed. n_obvs observed classes are 0-indexed (0, .., n_ovs-1)
         return torch.randint(
             low=0,
             high=self.n_obvs,
@@ -138,7 +141,7 @@ class HMM(torch.nn.Module):
 
         self.device = get_device() if device is None else device
 
-        logging.info(
+        logger.info(
             f"Creating HMM with {n_states} hidden states, bookended by 0 at both ends."
         )
 
@@ -489,6 +492,8 @@ if __name__ == "__main__":
     n_seq, device = 20, "cpu"
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
+
+    """
     casino = Casino(device=device)
 
     emission_model = categorical
@@ -576,4 +581,6 @@ if __name__ == "__main__":
     )
     logger.info(f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
     logger.info(f"Found optimised parameters to be:\n{list(hmm.parameters())}")
+    """
     logger.info(f"Done.\n\n")
+    
