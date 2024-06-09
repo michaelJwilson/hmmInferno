@@ -427,7 +427,7 @@ class HMM(torch.nn.Module):
 
         
 if __name__ == "__main__":
-    device = "cpu"
+    device = None
     n_states, n_obvs, n_seq = 4, 4, 1_000
 
     # NB (n_states * n_obvs) action space.
