@@ -39,7 +39,7 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB i)  rows sums to zero, as prob. to emit to any obs. is unity.
         #    ii) nn.Parameter marks this to be optimised via backprop.
-        #    iii)   
+        #    iii)
         self.log_em = torch.randn(self.n_states, self.n_obvs)
 
         self.log_em[0, :] = -99.0
@@ -48,7 +48,7 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB no emission from hidden state.
         self.log_em.data[0, :] = -99.0
-        
+
     def to_device(self, device):
         self.device = device
         self.log_em = self.log_em.to(device)
@@ -78,7 +78,7 @@ class CategoricalEmission(torch.nn.Module):
             sequence = bookend_sequence(sequence, device=self.device)
 
         return sequence
-            
+
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -138,8 +138,10 @@ class HMM(torch.nn.Module):
 
         self.device = get_device() if device is None else device
 
-        logging.info(f"Creating HMM with {n_states} hidden states, bookended by 0 at both ends.")
-        
+        logging.info(
+            f"Creating HMM with {n_states} hidden states, bookended by 0 at both ends."
+        )
+
         # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
@@ -163,8 +165,8 @@ class HMM(torch.nn.Module):
 
             # NB rows sums to zero, as prob. to transition to any state is unity.  Skipping constraint on bookends.
             self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
-            self.log_trans[0,0] = -99.
-            
+            self.log_trans[0, 0] = -99.0
+
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -195,11 +197,13 @@ class HMM(torch.nn.Module):
             atol=1e-06,
         )
         """
-        logger.info(f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}")
+        logger.info(
+            f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}"
+        )
         logger.info(f"Transition log probability matrix:\n{self.log_trans}\n")
 
         self.emission_model.validate()
-        
+
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
         self.log_trans = self.log_trans.to(device)
@@ -214,7 +218,7 @@ class HMM(torch.nn.Module):
         assert states[0] == states[-1] == 0
         assert obvs[0] != 0
         assert obvs[-1] != 0
-        
+
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone()
         last_state = states[0].clone()
@@ -481,15 +485,16 @@ if __name__ == "__main__":
     # TODO set seed for cuda / mps
     torch.manual_seed(123)
 
-    n_seq, device = 1_000, "cpu"
+    # TODO BUG? must be even?
+    n_seq, device = 4, "cpu"
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     casino = Casino(device=device)
 
     emission_model = categorical
-    
+
     obvs = emission_model.sample(n_seq=n_seq)
-    
+
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
         n_states=emission_model.n_states - 1,
@@ -501,28 +506,23 @@ if __name__ == "__main__":
     # NB hidden states matched to observed time steps.
     hidden_states = categorical.sample_states(n_seq, bookend=True)
     log_like = hmm.log_like(obvs, hidden_states)
-    
-    logger.info(f"Found a log likelihood= {log_like} for generated hidden states")
 
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
-    
+
     # NB Most probable state sequence
     viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
 
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
     log_evidence_backward = hmm.log_backward_scan(obvs)
-        
+
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
     log_evidence_backward, log_backward_array = hmm.log_backward(obvs)
-    
-    assert torch.allclose(
-        log_evidence_forward,
-        log_evidence_backward
-    )
-    
+
+    assert torch.allclose(log_evidence_forward, log_evidence_backward)
+
     # NB P(pi_i = k | x) for all i.
     log_state_posteriors = hmm.log_state_posterior(obvs)
 
@@ -535,14 +535,14 @@ if __name__ == "__main__":
     # NB specific to Categorical emission
     exp_emission_counts = hmm.exp_emission_counts(obvs)
 
-    baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
+    # baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
     # TODO
     # assert torch.allclose(
     #    viterbi_decoded_states.long(),
     #    decoded_states.long(),
-    #    
-    #)
+    #
+    # )
     """
     optimizer = Adam(hmm.parameters(), lr=1.e-2)
 
@@ -558,22 +558,35 @@ if __name__ == "__main__":
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
-    """        
-    print(f"\nObserved sequence: {obvs}")
-    print(f"\nAssumed Hidden sequence: {states}")
-    print(f"\nTrace table:\n{trace_table}")
-    print(
-        f"\nFound the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{decoded_states}"
+    """
+    logger.info(f"Observed sequence: {obvs}")
+    logger.info(f"Assumed Hidden sequence: {hidden_states}")
+    logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
+    logger.info(f"Trace table:\n{trace_table}")
+    logger.info(
+        f"Found the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{decoded_states}"
     )
-    print(f"\nFound the evidence to be {log_evidence_forward} by the forward method.")
-    print(f"Found the evidence to be {log_evidence_backward} by the backward method.")
-    print(f"\nFound the log forward array to be:\n{log_forward_array}")
-    print(f"\nFound the log backward array to be:\n{log_backward_array}")
-    print(f"\nFound the state posteriors to be:\n{log_state_posteriors}")
-    print(f"\nFound decoded states:\n{decoded_states}")
-    print(f"\nFound the log transition posteriors to be:\n{log_transition_posteriors}")
-    print(f"\nFound the exp transition counts to be:\n{exp_transition_counts}")
-    print(f"\nFound the exp emission counts to be:\n{exp_emission_counts}")
-    print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
-    print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
-    print(f"\n\nDone.\n\n")
+    logger.info(
+        f"Found the evidence to be {log_evidence_forward:.4f} by the forward method."
+    )
+    logger.info(
+        f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
+    )
+    logger.info(f"Found the log forward array to be:\n{log_forward_array}")
+    logger.info(f"Found the log backward array to be:\n{log_backward_array}")
+    logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
+    logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
+    logger.info(
+        f"Found the log transition posteriors to be:\n{log_transition_posteriors}"
+    )
+    logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}")
+    """
+    logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")
+    logger.info(
+        f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
+    )
+    logger.info(
+        f"Found the emissions Baum-Welch update to be:\n{baum_welch_transitions}"
+    )
+    """
+    logger.info(f"\n\nDone.\n\n")
