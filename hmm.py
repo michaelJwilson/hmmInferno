@@ -4,9 +4,6 @@ from torch.distributions import negative_binomial
 from utils import get_device
 from casino import CasinoEmission
 
-# TODO set seed for cuda / mps
-torch.manual_seed(123)
-
 
 class CategoricalEmission(torch.nn.Module):
     def __init__(self, n_states, n_obvs, device=None):
@@ -105,12 +102,18 @@ class HMM(torch.nn.Module):
         # NB bookends
         # self.n_steps = 1 + n_obvs + 1
 
+        self.emission_model = emission_model
+        
         # NB We start (and end) in the bookend state.  No gradient required.
-        self.log_pi = -99.0 * torch.ones(self.n_states, requires_grad=False)
+        self.log_pi = -99.0 * torch.ones(self.n_states, requires_grad=False, device=self.device)
         self.log_pi[0] = 0.0
 
         if log_trans is None:
-            self.log_trans = torch.randn(self.n_states, self.n_states)
+            self.log_trans = torch.randn(self.n_states, self.n_states, device=self.device)
+
+            # NB rows sums to zero, as prob. to transition to any state is unity.
+            self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
+            
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -124,12 +127,6 @@ class HMM(torch.nn.Module):
             self.log_trans = log_trans
 
         self.log_trans = torch.nn.Parameter(self.log_trans)
-
-        # NB rows sums to zero, as prob. to transition to any state is unity.
-        self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
-
-        self.emission_model = emission_model
-
         self.to_device(device)
         self.validate()
 
@@ -138,7 +135,7 @@ class HMM(torch.nn.Module):
 
     def validate(self):
         self.emission_model.validate()
-        
+        """
         # NB log probs.
         assert torch.allclose(
             self.log_trans.logsumexp(dim=1),
@@ -146,7 +143,7 @@ class HMM(torch.nn.Module):
             rtol=1e-05,
             atol=1e-06,
         )
-
+        """
         print(f"\n\nInitialised HMM with start log probs.:\n{self.log_pi}")
         print(f"\n\nwith transition log probs.:\n{self.log_trans}\n")
 
@@ -193,12 +190,12 @@ class HMM(torch.nn.Module):
 
         if traced:
             trace_table = torch.zeros(
-                1 + len(obvs) + 1, self.n_states, dtype=torch.int32
+                1 + len(obvs) + 1, self.n_states, dtype=torch.int32, device=self.device
             )
 
         for ii, obs in enumerate(obvs):
-            log_vs = log_vs[:, None] + self.log_trans.clone()
-            log_vs, states = torch.max(log_vs, dim=0)
+            interim = log_vs.unsqueeze(-1) + self.log_trans.clone()
+            log_vs, states = torch.max(interim, dim=0)
             log_vs += self.emission(states, obs)
 
             if traced:
@@ -242,9 +239,16 @@ class HMM(torch.nn.Module):
         log_fs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs):
-            log_fs = log_fs[:, None] + self.log_trans.clone()
-            log_fs = self.emission(None, obs) + torch.logsumexp(log_fs, dim=0)
+            log_fs = log_fs.unsqueeze(-1) + self.log_trans.clone()
 
+            # TODO HACK
+            # log_fs = self.emission(None, obs) + torch.logsumexp(log_fs, dim=0)
+
+            print(log_fs)
+            print(obs)
+            print(self.emission(None, obs))
+            exit(0)
+            
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_trans[:, 0], dim=0)
 
@@ -260,9 +264,10 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(rev_obvs[:-1]):
             log_bs = (
                 self.log_trans.clone()
-                + self.emission(None, obv)[None, :]
-                + log_bs[None, :]
+                + self.emission(None, obv).unsqueeze(0)
+                + log_bs.unsqueeze(0)
             )
+            
             log_bs = torch.logsumexp(log_bs, dim=1)
 
         obv = rev_obvs[-1]
@@ -432,29 +437,30 @@ class HMM(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    device = None
-    n_seq = 1000
+    n_seq, device = 1_000, "cpu"
 
-    # categorical_emission = CategoricalEmission(n_states=4, n_obvs=4, device=device)
-    casino = CasinoEmission(device=device)
+    # TODO set seed for cuda / mps                                                                                                                                                                                   
+    torch.manual_seed(123)
+    
+    # emission = CategoricalEmission(n_states=4, n_obvs=4, device=device)
+    emission = CasinoEmission(device=device)
 
-    # NB (n_states * n_obvs) action space.
-    casino_hmm = HMM(n_states=2, emission_model=casino, log_trans=casino.log_trans, device=device)
+    obvs = emission.sample(n_seq=n_seq)
     """
-    # NB Normal(0., 1.) for observed sequence.
-    obvs = torch.randint(low=0, high=n_states, size=(n_seq,))
+    # NB (n_states * n_obvs) action space.
+    hmm = HMM(n_states=2, emission_model=casino, log_trans=casino.log_trans, device=device)
 
     # NB hidden states matched to observed time steps.
-    states = torch.randint(low=1, high=(n_states + 1), size=(n_seq,))
-    states = hmm.bookend_states(states).to(device)
+    # states = torch.randint(low=1, high=(n_states + 1), size=(n_seq,))
+    # states = hmm.bookend_states(states).to(device)
 
-    log_like = hmm.log_like(obvs, states)
+    # log_like = hmm.log_like(obvs, states)
     
     # NB P(x, pi) with tracing for most probably state sequence
-    log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
-
+    # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
+    
     # NB Most probable state sequence
-    viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
+    # viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
 
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
@@ -521,6 +527,7 @@ if __name__ == "__main__":
     print(f"\nFound the exp transition counts to be:\n{exp_transition_counts}")
     print(f"\nFound the exp emission counts to be:\n{exp_emission_counts}")
     print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
-    print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")    
-    print(f"\n\nDone.\n\n")
+    print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
     """
+    print(f"\n\nDone.\n\n")
+
