@@ -42,11 +42,13 @@ class CategoricalEmission(torch.nn.Module):
         #    iii)   
         self.log_em = torch.randn(self.n_states, n_obvs)
 
-        # NB no emission from hidden state.
         self.log_em[0, :] = -99.0
         self.log_em = torch.nn.Parameter(self.log_em)
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
 
+        # NB no emission from hidden state.
+        self.log_em.data[0, :] = -99.0
+        
     def to_device(self, device):
         self.device = device
         self.log_em = self.log_em.to(device)
@@ -83,16 +85,10 @@ class CategoricalEmission(torch.nn.Module):
         elif obs is None:
             return self.log_em[state, :]
         else:
-            print(state)
-            print(obs)
-
-            print(self.log_em)
-            exit(0)
-            
             return self.log_em[state, obs]
 
     def validate(self):
-        logger.info(f"\nwith emission log probs.:\n{self.log_em}\n")
+        logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
 
 class NegativeBinomial:
@@ -154,8 +150,6 @@ class HMM(torch.nn.Module):
         # NB number of possible observable states, as opposed to sequence length.
         self.n_obvs = emission_model.n_obvs - 1
 
-        self.emission_model = emission_model
-
         # NB We start (and end) in the bookend state.  No gradient required.
         self.log_pi = -99.0 * torch.ones(
             self.n_states, requires_grad=False, device=self.device
@@ -169,7 +163,8 @@ class HMM(torch.nn.Module):
 
             # NB rows sums to zero, as prob. to transition to any state is unity.  Skipping constraint on bookends.
             self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
-
+            self.log_trans[0,0] = -99.
+            
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -183,6 +178,7 @@ class HMM(torch.nn.Module):
             self.log_trans = log_trans
 
         self.log_trans = torch.nn.Parameter(self.log_trans)
+        self.emission_model = emission_model
         self.to_device(device)
         self.validate()
 
@@ -190,7 +186,6 @@ class HMM(torch.nn.Module):
         return self.emission_model.emission(state, obs)
 
     def validate(self):
-        self.emission_model.validate()
         """
         # NB log probs.
         assert torch.allclose(
@@ -200,9 +195,11 @@ class HMM(torch.nn.Module):
             atol=1e-06,
         )
         """
-        logger.info(f"Initialised HMM with start log probs.:\n{self.log_pi}")
-        logger.info(f"with transition log probs.:\n{self.log_trans}\n")
+        logger.info(f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}")
+        logger.info(f"Transition log probability matrix:\n{self.log_trans}\n")
 
+        self.emission_model.validate()
+        
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
         self.log_trans = self.log_trans.to(device)
@@ -215,8 +212,6 @@ class HMM(torch.nn.Module):
         """
         # NB we must start in a bookend state
         assert states[0] == states[-1] == 0
-
-        # NB
         assert obvs[0] != 0
         assert obvs[-1] != 0
         
@@ -509,13 +504,14 @@ if __name__ == "__main__":
         log_trans=None,
         device=device,
     )
-    """
-    # NB hidden states matched to observed time steps.
-    states = categorical.sample_states(n_seq, bookend=True)
-    log_like = hmm.log_like(obvs, states)
 
-    print(log_like)
+    # NB hidden states matched to observed time steps.
+    hidden_states = categorical.sample_states(n_seq, bookend=True)
+    log_like = hmm.log_like(obvs, hidden_states)
     
+    logger.info(f"Found a log likelihood= {log_like} for generated hidden states")
+
+    """
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     
