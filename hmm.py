@@ -1,6 +1,6 @@
 import torch
 from torch.optim import Adam
-from torch.distributions.negative_binomial import NegativeBinomial
+from torch.distributions import negative_binomial
 
 # TODO set seed for cuda / mps
 torch.manual_seed(123)
@@ -47,12 +47,12 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, obs]
 
 
-# TODO BafEmission
-class TranscriptEmission:
+class NegativeBinomial:
     """
-    Models the # of failures in a sequence of IID Bernoulli trials before a specified (non-random) # of successes, r.
+    Models the # of failures in a sequence of IID Bernoulli trials
+    before a specified (non-random) # of successes, r.
 
-    total_count (float or Tensor) – non-negative number of negative Bernoulli trials to stop.
+    total_count (float or Tensor) – non-negative number of negative Bernoulli trials until stop.
     probs (Tensor) – Event probabilities of success in the half-open interval [0, 1).
     logits (Tensor) – Event log-odds for probabilities of success, probs = 1 / (1 + exp(-logits)).
 
@@ -60,9 +60,8 @@ class TranscriptEmission:
         https://pytorch.org/docs/stable/distributions.html
         https://en.wikipedia.org/wiki/Negative_binomial_distribution
     """
-
     def __init__(self, total_count, probs):
-        self.dist = NegativeBinomial(total_count, probs=probs, validate_args=True)
+        self.dist = negative_binomial.NegativeBinomial(total_count, probs=probs, validate_args=True)
 
     @property
     def mean(self):
@@ -228,7 +227,7 @@ class HMM(torch.nn.Module):
 
         return decoded_states
 
-    def log_forward_carry(self, obvs):
+    def log_forward_scan(self, obvs):
         """
         Log evidence (marginalised over latent) by the forward method.
 
@@ -243,7 +242,7 @@ class HMM(torch.nn.Module):
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_trans[:, 0], dim=0)
 
-    def log_backward_carry(self, obvs):
+    def log_backward_scan(self, obvs):
         """
         Log evidence (marginalised over latent) by the forward method,
 
@@ -450,9 +449,9 @@ if __name__ == "__main__":
     # NB Most probable state sequence
     viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
 
-    # NB P(x) marginalised over hidden states by forward & backward carry - no array traceback.
-    log_evidence_forward = hmm.log_forward_carry(obvs)
-    log_evidence_backward = hmm.log_backward_carry(obvs)
+    # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
+    log_evidence_forward = hmm.log_forward_scan(obvs)
+    log_evidence_backward = hmm.log_backward_scan(obvs)
 
     assert log_evidence_forward == log_evidence_backward
 
