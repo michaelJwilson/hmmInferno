@@ -38,7 +38,11 @@ class CategoricalEmission(torch.nn.Module):
     def sample(self, n_seq):
         # NB no bookend states
         return torch.randint(
-            low=1, high=1 + self.n_states, size=(n_seq,), dtype=torch.int32, device=self.device
+            low=1,
+            high=1 + self.n_states,
+            size=(n_seq,),
+            dtype=torch.int32,
+            device=self.device,
         )
 
     def emission(self, state, obs):
@@ -168,12 +172,11 @@ class HMM(torch.nn.Module):
         self.emission_model = self.emission_model.to_device(device)
         self.device = device
 
-    @staticmethod
-    def bookend_states(hidden_states):
+    def bookend_states(self, hidden_states):
         """
         Obs. sequence transitions from and to a book end state.
         """
-        return torch.cat((torch.tensor([0]), hidden_states, torch.tensor([0])), dim=0)
+        return torch.cat((torch.tensor([0], dtype=torch.int32, device=self.device), hidden_states, torch.tensor([0], dtype=torch.int32, device=self.device)), dim=0)
 
     def log_like(self, obvs, states):
         """
@@ -452,10 +455,10 @@ class HMM(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    n_seq, device = 1_000, "cpu"
-
     # TODO set seed for cuda / mps
     torch.manual_seed(123)
+
+    n_seq, device = 1_000, "cpu"
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     casino = Casino(device=device)
@@ -463,15 +466,18 @@ if __name__ == "__main__":
     obvs = casino.sample(n_seq=n_seq)
 
     # NB (n_states * n_obvs) action space.
-    hmm = HMM(n_states=2, emission=categorical, log_trans=None, device=device)
-    
-    """
-    # NB hidden states matched to observed time steps.
-    # states = torch.randint(low=1, high=(n_states + 1), size=(n_seq,))
-    # states = hmm.bookend_states(states).to(device)
+    hmm = HMM(
+        n_states=categorical.n_states - 1,
+        emission_model=categorical,
+        log_trans=None,
+        device=device,
+    )
 
-    # log_like = hmm.log_like(obvs, states)
+    # NB hidden states matched to observed time steps.
+    states = hmm.bookend_states(categorical.sample(n_seq))
     
+    log_like = hmm.log_like(obvs, states)
+    """
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     
