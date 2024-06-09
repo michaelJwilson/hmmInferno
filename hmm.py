@@ -39,9 +39,6 @@ class CategoricalEmission(torch.nn.Module):
         return self
         
     def emission(self, state, obs):
-        """
-        TODO evaluate log probs. emission | state, obs.
-        """
         if state is None:
             return self.log_em[:, obs]
         elif obs is None:
