@@ -467,14 +467,22 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def backprop_training(model):
-        optimizer.zero_grad()
+    def torch_training(self, obvs, optimizer=None, n_epochs=1, lr=1.e-2):
+        optimizer = Adam(self.parameters(), lr=lr)
 
-        loss = calc_dkl(logp, logq)
-        loss.backward()
+        for epoch in range(n_epochs):
+            optimizer.zero_grad()
 
-        optimizer.step()
+            loss = -self.log_forward_scan(obvs)
+            loss.backward()
+            
+            optimizer.step()
+            
+            if epoch % 10 == 0:
+                logger.debug(f"Epoch {epoch}, Loss: {loss.item()}")
 
+        return hmm.log_forward_scan(obvs)
+                
 
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
@@ -532,29 +540,15 @@ if __name__ == "__main__":
 
     baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
+    torch_log_evidence_forward = hmm.torch_training(obvs)
+    
     # TODO
     # assert torch.allclose(
     #    viterbi_decoded_states.long(),
     #    decoded_states.long(),
     #
     # )
-    
-    """
-    optimizer = Adam(hmm.parameters(), lr=1.e-2)
 
-    for epoch in range(100):
-        optimizer.zero_grad()
-
-        # Compute the negative log-likelihood
-        loss = -hmm.log_forward_scan(obvs)
-        
-        # Backward pass and optimize                                                                                                                                                                                
-        loss.backward()
-        optimizer.step()
-
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item()}")
-    """
     logger.info(f"Observed sequence: {obvs}")
     logger.info(f"Assumed Hidden sequence: {hidden_states}")
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
@@ -583,4 +577,5 @@ if __name__ == "__main__":
     logger.info(
         f"Found the emissions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
+    logger.info(f"After training with torch, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
     logger.info(f"\n\nDone.\n\n")
