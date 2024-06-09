@@ -530,7 +530,7 @@ if __name__ == "__main__":
     # NB specific to Categorical emission
     exp_emission_counts = hmm.exp_emission_counts(obvs)
 
-    # baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
+    baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
     # TODO
     # assert torch.allclose(
@@ -576,7 +576,6 @@ if __name__ == "__main__":
         f"Found the log transition posteriors to be:\n{log_transition_posteriors}"
     )
     logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}")
-    """
     logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")
     logger.info(
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
@@ -584,5 +583,4 @@ if __name__ == "__main__":
     logger.info(
         f"Found the emissions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
-    """
     logger.info(f"\n\nDone.\n\n")
