@@ -69,7 +69,7 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, obs]
 
     def validate(self):
-        print(f"\nwith emission log probs.:\n{self.log_em}\n")
+        logger.info(f"\nwith emission log probs.:\n{self.log_em}\n")
 
 
 class NegativeBinomial:
@@ -177,8 +177,8 @@ class HMM(torch.nn.Module):
             atol=1e-06,
         )
         """
-        print(f"\n\nInitialised HMM with start log probs.:\n{self.log_pi}")
-        print(f"\n\nwith transition log probs.:\n{self.log_trans}\n")
+        logger.info(f"Initialised HMM with start log probs.:\n{self.log_pi}")
+        logger.info(f"with transition log probs.:\n{self.log_trans}\n")
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
@@ -502,9 +502,9 @@ if __name__ == "__main__":
     # NB hidden states matched to observed time steps.
     states = hmm.bookend_states(states)
 
-    log_like = hmm.log_like(obvs, states)
-
     """
+    log_like = hmm.log_like(obvs, states)
+    
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     
