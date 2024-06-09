@@ -1,6 +1,8 @@
 import torch
 from torch.optim import Adam
 from torch.distributions import negative_binomial
+from utils import get_device
+from casino import CasinoEmission
 
 # TODO set seed for cuda / mps
 torch.manual_seed(123)
@@ -11,20 +13,26 @@ class CategoricalEmission(torch.nn.Module):
         super(CategoricalEmission, self).__init__()
 
         self.device = get_device() if device is None else device
-        
+
+        # NB we assume a bookend state to transition in/out.
+        self.n_states = 1 + n_states
+
+        # NB number of possible observable states, as opposed to sequence length.
+        self.n_obvs = n_obvs
+
         # NB rows sums to zero, as prob. to emit to any obs. is unity.
         #    nn.Parameter marks this to be optimised via backprop.
         self.log_em = torch.randn(n_states, n_obvs)
         self.log_em[0, :] = -99.0
         self.log_em = torch.nn.Parameter(self.log_em)
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
-        
+
     def to_device(self, device):
         self.device = device
         self.log_em = self.log_em.to(device)
 
         return self
-        
+
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -33,6 +41,9 @@ class CategoricalEmission(torch.nn.Module):
         else:
             return self.log_em[state, obs]
 
+    def validate(self):
+        print(f"\nwith emission log probs.:\n{self.log_em}\n")
+        
 
 class NegativeBinomial:
     """
@@ -47,8 +58,11 @@ class NegativeBinomial:
         https://pytorch.org/docs/stable/distributions.html
         https://en.wikipedia.org/wiki/Negative_binomial_distribution
     """
+
     def __init__(self, total_count, probs):
-        self.dist = negative_binomial.NegativeBinomial(total_count, probs=probs, validate_args=True)
+        self.dist = negative_binomial.NegativeBinomial(
+            total_count, probs=probs, validate_args=True
+        )
 
     @property
     def mean(self):
@@ -73,7 +87,7 @@ class NegativeBinomial:
 
 
 class HMM(torch.nn.Module):
-    def __init__(self, n_states, n_obvs, log_trans=None, device=None):
+    def __init__(self, n_states, emission_model, log_trans=None, device=None):
         super(HMM, self).__init__()
 
         self.device = get_device() if device is None else device
@@ -81,11 +95,15 @@ class HMM(torch.nn.Module):
         # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
+        assert (
+            self.n_states == emission_model.n_states
+        ), f"State mismatch between HMM and Emission, found {self.n_states} but expected {emission_model.n_states}."
+
         # NB number of possible observable states, as opposed to sequence length.
-        self.n_obvs = n_obvs
+        self.n_obvs = emission_model.n_obvs
 
         # NB bookends
-        self.n_steps = 1 + n_obvs + 1
+        # self.n_steps = 1 + n_obvs + 1
 
         # NB We start (and end) in the bookend state.  No gradient required.
         self.log_pi = -99.0 * torch.ones(self.n_states, requires_grad=False)
@@ -106,11 +124,11 @@ class HMM(torch.nn.Module):
             self.log_trans = log_trans
 
         self.log_trans = torch.nn.Parameter(self.log_trans)
-            
+
         # NB rows sums to zero, as prob. to transition to any state is unity.
         self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
 
-        self.emission_model = CategoricalEmission(self.n_states, self.n_obvs, device=device)
+        self.emission_model = emission_model
 
         self.to_device(device)
         self.validate()
@@ -119,6 +137,8 @@ class HMM(torch.nn.Module):
         return self.emission_model.emission(state, obs)
 
     def validate(self):
+        self.emission_model.validate()
+        
         # NB log probs.
         assert torch.allclose(
             self.log_trans.logsumexp(dim=1),
@@ -129,7 +149,6 @@ class HMM(torch.nn.Module):
 
         print(f"\n\nInitialised HMM with start log probs.:\n{self.log_pi}")
         print(f"\n\nwith transition log probs.:\n{self.log_trans}\n")
-        print(f"\nwith emission log probs.:\n{self.emission_model.log_em}\n")
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
@@ -264,7 +283,7 @@ class HMM(torch.nn.Module):
 
         log_fs = torch.zeros(1 + len(obvs) + 1, len(log_fs_init)).to(self.device)
         log_fs[0] = log_fs_init
-        
+
         for ii, obv in enumerate(obvs):
             interim = log_fs[ii].clone().unsqueeze(-1) + self.log_trans.clone()
             log_fs[ii + 1] = self.emission(None, obv) + torch.logsumexp(interim, dim=0)
@@ -369,7 +388,7 @@ class HMM(torch.nn.Module):
         log_backward_array = log_backward_array[1:]
 
         unique_obvs = torch.unique(obvs)
-        
+
         interim = log_forward_array + log_backward_array - log_evidence_forward
 
         # TODO int?
@@ -388,8 +407,7 @@ class HMM(torch.nn.Module):
     def baum_welch_update(
         self, obvs, transition_pseudo_counts=None, emission_pseudo_counts=None
     ):
-        """
-        """
+        """ """
         exp_transition_counts = self.exp_transition_counts(
             obvs, transition_pseudo_counts
         )
@@ -404,7 +422,6 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    
     def backprop_training(model):
         optimizer.zero_grad()
 
@@ -413,14 +430,17 @@ class HMM(torch.nn.Module):
 
         optimizer.step()
 
-        
+
 if __name__ == "__main__":
     device = None
-    n_states, n_obvs, n_seq = 4, 4, 1_000
+    n_seq = 1000
+
+    # categorical_emission = CategoricalEmission(n_states=4, n_obvs=4, device=device)
+    casino = CasinoEmission(device=device)
 
     # NB (n_states * n_obvs) action space.
-    hmm = HMM(n_states=n_states, n_obvs=n_obvs, device=device)
-    
+    casino_hmm = HMM(n_states=2, emission_model=casino, log_trans=casino.log_trans, device=device)
+    """
     # NB Normal(0., 1.) for observed sequence.
     obvs = torch.randint(low=0, high=n_states, size=(n_seq,))
 
@@ -503,4 +523,4 @@ if __name__ == "__main__":
     print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
     print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")    
     print(f"\n\nDone.\n\n")
-
+    """
