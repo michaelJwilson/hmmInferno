@@ -40,7 +40,7 @@ class CategoricalEmission(torch.nn.Module):
         # NB i)  rows sums to zero, as prob. to emit to any obs. is unity.
         #    ii) nn.Parameter marks this to be optimised via backprop.
         #    iii)   
-        self.log_em = torch.randn(self.n_states, n_obvs)
+        self.log_em = torch.randn(self.n_states, self.n_obvs)
 
         self.log_em[0, :] = -99.0
         self.log_em = torch.nn.Parameter(self.log_em)
@@ -56,10 +56,10 @@ class CategoricalEmission(torch.nn.Module):
         return self
 
     def sample(self, n_seq):
-        # NB bookends are never observed.
+        # NB bookends are never observed.  Observed classes are 0-indexed.
         return torch.randint(
-            low=1,
-            high=1 + self.n_obvs,
+            low=0,
+            high=self.n_obvs,
             size=(n_seq,),
             dtype=torch.int32,
             device=self.device,
@@ -288,14 +288,7 @@ class HMM(torch.nn.Module):
 
         for ii, obs in enumerate(obvs):
             log_fs = log_fs.unsqueeze(-1) + self.log_trans.clone()
-
-            # TODO HACK
-            # log_fs = self.emission(None, obs) + torch.logsumexp(log_fs, dim=0)
-
-            print(log_fs)
-            print(obs)
-            print(self.emission(None, obs))
-            exit(0)
+            log_fs = self.emission(None, obs) + torch.logsumexp(log_fs, dim=0)
 
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_trans[:, 0], dim=0)
@@ -511,12 +504,11 @@ if __name__ == "__main__":
     
     logger.info(f"Found a log likelihood= {log_like} for generated hidden states")
 
-    """
     # NB P(x, pi) with tracing for most probably state sequence
-    # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
+    log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     
     # NB Most probable state sequence
-    # viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
+    viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
 
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
@@ -551,7 +543,7 @@ if __name__ == "__main__":
     #    decoded_states.long(),
     #    
     #)
-
+    """
     optimizer = Adam(hmm.parameters(), lr=1.e-2)
 
     for epoch in range(100):
@@ -566,7 +558,7 @@ if __name__ == "__main__":
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
-            
+    """        
     print(f"\nObserved sequence: {obvs}")
     print(f"\nAssumed Hidden sequence: {states}")
     print(f"\nTrace table:\n{trace_table}")
@@ -584,5 +576,4 @@ if __name__ == "__main__":
     print(f"\nFound the exp emission counts to be:\n{exp_emission_counts}")
     print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
     print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
-    """
     print(f"\n\nDone.\n\n")
