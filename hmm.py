@@ -2,12 +2,13 @@ import logging
 import logging.config
 import sys
 
+import numpy as np
 import torch
 from torch.distributions import negative_binomial
 from torch.optim import Adam
 
 from casino import Casino
-from utils import get_device, bookend_sequence
+from utils import bookend_sequence, get_device
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -34,53 +35,33 @@ class CategoricalEmission(torch.nn.Module):
         # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
-        # NB number of possible observable classes.
-        self.n_obvs = n_obvs
-        
+        # NB number of possible observable classes + hidden observation emitted by bookend state.
+        self.n_obvs = 1 + n_obvs
+
         logger.info(
             f"Creating CategoricalEmission with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
         )
 
-        self.log_em = torch.randn(self.n_states, self.n_obvs)
+        # TODO HACK
+        # self.log_em = torch.randn(self.n_states, self.n_obvs)
+        self.log_em = torch.eye(self.n_states, self.n_obvs).log()
 
         # NB nn.Parameter marks this to be optimised via torch.
         self.log_em = torch.nn.Parameter(self.log_em)
 
+        # TODO HACK
+        # NB emit a bookend token from the bookend state.
+        # self.log_em.data[0, :] = -99.0
+        # self.log_em.data[0, 0] =   0.0
+
         # NB rows sums to zero, as prob. to emit to any obs. is unity.
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
-
-        # NB no emission from bookend state.
-        self.log_em.data[0, :] = -99.0
 
     def to_device(self, device):
         self.device = device
         self.log_em = self.log_em.to(device)
 
         return self
-
-    def sample(self, n_seq):
-        # NB bookends are never observed. n_obvs observed classes are 0-indexed (0, .., n_ovs-1)
-        return torch.randint(
-            low=0,
-            high=self.n_obvs,
-            size=(n_seq,),
-            dtype=torch.int32,
-            device=self.device,
-        )
-
-    def sample_states(self, n_seq, bookend=False):
-        sequence = torch.randint(
-            low=1,
-            high=self.n_states,
-            size=(n_seq,),
-            dtype=torch.int32,
-            device=self.device,
-        )
-
-        if bookend:
-            sequence = bookend_sequence(sequence, device=self.device)
-
-        return sequence
 
     def emission(self, state, obs):
         if state is None:
@@ -153,7 +134,7 @@ class HMM(torch.nn.Module):
         ), f"State mismatch between HMM and Emission, found {self.n_states} but expected {emission_model.n_states}."
 
         # NB number of possible observable states, as opposed to sequence length.
-        self.n_obvs = emission_model.n_obvs - 1
+        self.n_obvs = emission_model.n_obvs
 
         # NB We start (and end) in the bookend state.  No gradient required.
         self.log_pi = -99.0 * torch.ones(
@@ -165,24 +146,28 @@ class HMM(torch.nn.Module):
             self.log_trans = torch.randn(
                 self.n_states, self.n_states, device=self.device
             )
-
-            # NB rows sums to zero, as prob. to transition to any state is unity.  Skipping constraint on bookends.
-            self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
-            self.log_trans[0, 0] = -99.0
-
         else:
             assert isinstance(
                 log_trans, torch.Tensor
             ), "log_trans must be a torch.tensor instance"
 
             assert log_trans.shape == (
-                self.n_states,
+		self.n_states,
                 self.n_states,
             ), "log_trans must include bookend states."
 
             self.log_trans = log_trans
 
+        self.log_trans.data[:,0] = -99.
+            
         self.log_trans = torch.nn.Parameter(self.log_trans)
+        
+        # NB rows sums to zero, as prob. to transition to any state is unity.                                                                                                                                    
+        self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
+
+        self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
+        self.log_trans.data[0,0] = -torch.inf
+        
         self.emission_model = emission_model
         self.to_device(device)
         self.validate()
@@ -203,7 +188,7 @@ class HMM(torch.nn.Module):
         logger.info(
             f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}"
         )
-        logger.info(f"Transition log probability matrix:\n{self.log_trans}\n")
+        logger.info(f"Transition probability matrix:\n{self.log_trans.exp()}\n")
 
         self.emission_model.validate()
 
@@ -213,22 +198,66 @@ class HMM(torch.nn.Module):
         self.emission_model = self.emission_model.to_device(device)
         self.device = device
 
+    def sample_hidden(self, n_seq, bookend=False):
+        last_state = 0
+        sequence = [last_state]
+
+        states = np.arange(self.n_states)
+        
+        # TODO torch
+        for ii in range(n_seq):
+            probs = self.log_trans[last_state,:].exp().detach().numpy()
+            probs[0] = 0.
+            
+            state = np.random.choice(states, p=probs)
+
+            sequence.append(state)
+            last_state = state
+
+        sequence = torch.tensor(sequence, dtype=torch.int32, device=self.device)
+            
+        if bookend:
+            sequence = bookend_sequence(sequence, device=self.device)
+
+        return sequence[1:]            
+
+    def sample_obvs(self, n_seq, hidden=None, bookend=False):
+        # TODO torch 
+        if hidden is None:
+            hidden = sample_hidden(self, n_seq, bookend=bookend).detach().numpy()
+            
+        if bookend:
+            assert hidden[0] == hidden[-1] == 0
+
+        obvs = []
+        emit_states = np.arange(self.n_states)
+        
+        # TODO assumes categorical
+        for ii, state in enumerate(hidden):
+            probs = self.emission(state, None).exp().detach().numpy()
+            emit = np.random.choice(emit_states, p=probs)
+
+            obvs.append(emit)
+            
+        obvs = torch.tensor(obvs, dtype=torch.int32, device=self.device)
+
+        return obvs
+
     def log_like(self, obvs, states):
         """
         Eqn. (3.6) of Durbin.
         """
-        # NB we must start in a bookend state
+        # NB we must start in a bookend state with a bookend obs.
         assert states[0] == states[-1] == 0
-        assert obvs[0] != 0
-        assert obvs[-1] != 0
+        assert obvs[0] == obvs[-1] == 0
 
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone()
         last_state = states[0].clone()
 
-        for obs, state in zip(obvs, states[1:-1]):
-            log_like += self.emission(state, obs)
+        for obs, state in zip(obvs[1:], states[1:]):
             log_like += self.log_trans[last_state, state]
+            log_like += self.emission(state, obs)
 
             last_state = state
 
@@ -241,22 +270,26 @@ class HMM(torch.nn.Module):
 
         See value algebra on pg. 56 of Durbin.
         """
-        log_vs = self.log_pi.clone()
+        # NB we must start in a bookend state with a bookend obs.
+        assert obvs[0] == obvs[-1] == 0
 
         if traced:
             trace_table = torch.zeros(
-                1 + len(obvs) + 1, self.n_states, dtype=torch.int32, device=self.device
+                len(obvs), self.n_states, dtype=torch.int32, device=self.device
             )
 
-        for ii, obs in enumerate(obvs):
+        log_vs = self.log_pi.clone()
+
+        for ii, obs in enumerate(obvs[1:]):
             interim = log_vs.unsqueeze(-1) + self.log_trans.clone()
+
             log_vs, states = torch.max(interim, dim=0)
             log_vs += self.emission(states, obs)
 
             if traced:
                 trace_table[1 + ii, :] = states
 
-        # NB finally transition into the book end state.
+        # NB finally forced transition into the book end state.
         log_vs += self.log_trans[:, 0]
         log_joint_prob, penultimate_state = torch.max(log_vs, dim=0)
 
@@ -430,24 +463,28 @@ class HMM(torch.nn.Module):
         return exp_transition_counts
 
     def exp_emission_counts(self, obvs, pseudo_counts=None):
-        """
-        """
+        """ """
         # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class?
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         _, log_backward_array = self.log_backward(obvs)
 
         # NB no bookend states
-        log_forward_array, log_backward_array = log_forward_array[1:-1], log_backward_array[1:]
+        log_forward_array, log_backward_array = (
+            log_forward_array[1:-1],
+            log_backward_array[1:],
+        )
         interim = log_forward_array + log_backward_array - log_evidence_forward
 
         if pseudo_counts is None:
-            exp_emission_counts = torch.zeros((self.n_states, self.n_obvs), device=self.device)
+            exp_emission_counts = torch.zeros(
+                (self.n_states, self.n_obvs), device=self.device
+            )
         else:
             exp_emission_counts = pseduo_counts
 
         # TODO
         for ii, obv in enumerate(torch.unique(obvs)):
-            mask = (obvs == obv)
+            mask = obvs == obv
             exp_emission_counts[:, ii] = torch.logsumexp(interim[mask], dim=0).exp()
 
         return exp_emission_counts
@@ -470,7 +507,7 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=1, lr=1.e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=1, lr=1.0e-2):
         optimizer = Adam(self.parameters(), lr=lr)
 
         for epoch in range(n_epochs):
@@ -478,11 +515,11 @@ class HMM(torch.nn.Module):
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
-            
+
             optimizer.step()
-                
+
         return n_epochs, self.log_forward_scan(obvs)
-                
+
 
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
@@ -492,13 +529,10 @@ if __name__ == "__main__":
     n_seq, device = 20, "cpu"
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
-
-    """
-    casino = Casino(device=device)
+    # casino = Casino(device=device)
 
     emission_model = categorical
-
-    obvs = emission_model.sample(n_seq=n_seq)
+    emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
@@ -509,18 +543,42 @@ if __name__ == "__main__":
     )
 
     # NB hidden states matched to observed time steps.
-    hidden_states = categorical.sample_states(n_seq, bookend=True)
+    hidden_states = hmm.sample_hidden(n_seq, bookend=True)
+    obvs = hmm.sample_obvs(n_seq, hidden_states)
+    
+    logger.info(f"Sampled hidden sequence:\n{hidden_states}")
+    logger.info(f"Observed sequence:\n{obvs}")
+    
+    """
     log_like = hmm.log_like(obvs, hidden_states)
+
+    logger.info(f"Assumed Hidden sequence: {hidden_states}")
+    logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
 
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
 
+    logger.info(
+        f"Found a joint probability P(x, pi)={log_joint_prob:.4f} with trace:\n{trace_table}"
+    )
+
     # NB Most probable state sequence
     viterbi_decoded_states = hmm.viterbi_traceback(trace_table, penultimate_state)
+
+    logger.info(
+        f"Found the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{viterbi_decoded_states}"
+    )
 
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
     log_evidence_backward = hmm.log_backward_scan(obvs)
+
+    logger.info(
+        f"Found the evidence to be {log_evidence_forward:.4f} by the forward method."
+    )
+    logger.info(
+        f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
+    )
 
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
@@ -551,19 +609,6 @@ if __name__ == "__main__":
     #
     # )
 
-    logger.info(f"Observed sequence: {obvs}")
-    logger.info(f"Assumed Hidden sequence: {hidden_states}")
-    logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
-    logger.info(f"Trace table:\n{trace_table}")
-    logger.info(
-        f"Found the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{decoded_states}"
-    )
-    logger.info(
-        f"Found the evidence to be {log_evidence_forward:.4f} by the forward method."
-    )
-    logger.info(
-        f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
-    )
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
@@ -583,4 +628,3 @@ if __name__ == "__main__":
     logger.info(f"Found optimised parameters to be:\n{list(hmm.parameters())}")
     """
     logger.info(f"Done.\n\n")
-    
