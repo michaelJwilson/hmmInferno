@@ -7,7 +7,7 @@ from torch.distributions import negative_binomial
 from torch.optim import Adam
 
 from casino import Casino
-from utils import get_device
+from utils import get_device, bookend_sequence
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -60,6 +60,20 @@ class CategoricalEmission(torch.nn.Module):
             device=self.device,
         )
 
+    def sample_states(self, n_seq, bookend=False):
+        sequence = torch.randint(
+            low=1,
+            high=1 + self.n_states,
+            size=(n_seq,),
+            dtype=torch.int32,
+            device=self.device,
+        )
+
+        if bookend:
+            sequence = bookend_sequence(sequence, device=self.device)
+
+        return sequence
+            
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -144,7 +158,7 @@ class HMM(torch.nn.Module):
                 self.n_states, self.n_states, device=self.device
             )
 
-            # NB rows sums to zero, as prob. to transition to any state is unity.
+            # NB rows sums to zero, as prob. to transition to any state is unity.  Skipping constraint on bookends.
             self.log_trans[1:] = self.log_trans[1:].log_softmax(dim=1)
 
         else:
@@ -186,19 +200,6 @@ class HMM(torch.nn.Module):
         self.emission_model = self.emission_model.to_device(device)
         self.device = device
 
-    def bookend_states(self, hidden_states):
-        """
-        Obs. sequence transitions from and to a book end state.
-        """
-        return torch.cat(
-            (
-                torch.tensor([0], dtype=torch.int32, device=self.device),
-                hidden_states,
-                torch.tensor([0], dtype=torch.int32, device=self.device),
-            ),
-            dim=0,
-        )
-
     def log_like(self, obvs, states):
         """
         Eqn. (3.6) of Durbin.
@@ -209,7 +210,7 @@ class HMM(torch.nn.Module):
         # NB
         assert obvs[0] != 0
         assert obvs[-1] != 0
-
+        
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone()
         last_state = states[0].clone()
@@ -488,23 +489,23 @@ if __name__ == "__main__":
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     casino = Casino(device=device)
 
-    obvs = casino.sample(n_seq=n_seq)
-    states = categorical.sample(n_seq)
-
+    emission_model = categorical
+    
+    obvs = emission_model.sample(n_seq=n_seq)
+    
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
-        n_states=categorical.n_states - 1,
-        emission_model=categorical,
+        n_states=emission_model.n_states - 1,
+        emission_model=emission_model,
         log_trans=None,
         device=device,
     )
 
     # NB hidden states matched to observed time steps.
-    states = hmm.bookend_states(states)
+    states = categorical.sample_states(n_seq, bookend=True)
+    log_like = hmm.log_like(obvs, states)
 
     """
-    log_like = hmm.log_like(obvs, states)
-    
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     

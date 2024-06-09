@@ -10,3 +10,16 @@ def get_device():
         device = torch.device("cpu")
 
     return device
+
+def bookend_sequence(sequence, device=None):
+    """                                                                                                                                                                                                           
+    Bookend a sequence with the 0-state.
+    """
+    return torch.cat(
+        (
+            torch.tensor([0], dtype=torch.int32, device=device),
+            sequence,
+            torch.tensor([0], dtype=torch.int32, device=device),
+        ),
+        dim=0,
+    )
