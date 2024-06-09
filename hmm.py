@@ -6,6 +6,10 @@ from casino import CasinoEmission
 
 
 class CategoricalEmission(torch.nn.Module):
+    """
+    Categoical emission from a booked + n_states hidden states, (0, ...),
+    to n_obvs emission types.
+    """
     def __init__(self, n_states, n_obvs, device=None):
         super(CategoricalEmission, self).__init__()
 
