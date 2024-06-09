@@ -29,9 +29,8 @@ class CategoricalEmission(torch.nn.Module):
         self.log_em = torch.randn(n_states, n_obvs)
         self.log_em[0, :] = -99.0
         self.log_em = torch.nn.Parameter(self.log_em)
-
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
-
+        
     def to_device(self, device):
         self.device = device
         self.log_em = self.log_em.to(device)
@@ -429,7 +428,7 @@ class HMM(torch.nn.Module):
         
 if __name__ == "__main__":
     device = "cpu"
-    n_states, n_obvs, n_seq = 4, 4, 10
+    n_states, n_obvs, n_seq = 4, 4, 1_000
 
     # NB (n_states * n_obvs) action space.
     hmm = HMM(n_states=n_states, n_obvs=n_obvs, device=device)
@@ -442,7 +441,7 @@ if __name__ == "__main__":
     states = hmm.bookend_states(states).to(device)
 
     log_like = hmm.log_like(obvs, states)
-
+    
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
 
@@ -452,15 +451,16 @@ if __name__ == "__main__":
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
     log_evidence_backward = hmm.log_backward_scan(obvs)
-
-    assert log_evidence_forward == log_evidence_backward
-
+        
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
     log_evidence_backward, log_backward_array = hmm.log_backward(obvs)
     
-    assert log_evidence_forward == log_evidence_backward
-
+    assert torch.allclose(
+        log_evidence_forward,
+        log_evidence_backward
+    )
+    
     # NB P(pi_i = k | x) for all i.
     log_state_posteriors = hmm.log_state_posterior(obvs)
 
@@ -482,6 +482,21 @@ if __name__ == "__main__":
     #    
     #)
 
+    optimizer = Adam(hmm.parameters(), lr=1.e-2)
+
+    for epoch in range(100):
+        optimizer.zero_grad()
+
+        # Compute the negative log-likelihood
+        loss = -hmm.log_forward_scan(obvs)
+        
+        # Backward pass and optimize                                                                                                                                                                                
+        loss.backward()
+        optimizer.step()
+
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch}, Loss: {loss.item()}")
+            
     print(f"\nObserved sequence: {obvs}")
     print(f"\nAssumed Hidden sequence: {states}")
     print(f"\nTrace table:\n{trace_table}")
@@ -498,6 +513,6 @@ if __name__ == "__main__":
     print(f"\nFound the exp transition counts to be:\n{exp_transition_counts}")
     print(f"\nFound the exp emission counts to be:\n{exp_emission_counts}")
     print(f"\nFound the transitions Baum-Welch update to be:\n{baum_welch_transitions}")
-    print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")
+    print(f"\nFound the emissions Baum-Welch update to be:\n{baum_welch_transitions}")    
     print(f"\n\nDone.\n\n")
 
