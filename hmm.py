@@ -480,8 +480,8 @@ class HMM(torch.nn.Module):
             
             if epoch % 10 == 0:
                 logger.debug(f"Epoch {epoch}, Loss: {loss.item()}")
-
-        return hmm.log_forward_scan(obvs)
+                
+        return n_epochs, self.log_forward_scan(obvs)
                 
 
 if __name__ == "__main__":
@@ -540,7 +540,7 @@ if __name__ == "__main__":
 
     baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
-    torch_log_evidence_forward = hmm.torch_training(obvs)
+    torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(obvs, n_epochs=100)
     
     # TODO
     # assert torch.allclose(
@@ -577,5 +577,6 @@ if __name__ == "__main__":
     logger.info(
         f"Found the emissions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
-    logger.info(f"After training with torch, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
-    logger.info(f"\n\nDone.\n\n")
+    logger.info(f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
+    logger.info(f"Found optimised parameters to be:\n{list(hmm.parameters())}")
+    logger.info(f"Done.\n\n")
