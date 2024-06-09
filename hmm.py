@@ -437,10 +437,10 @@ class HMM(torch.nn.Module):
         log_forward_array, log_backward_array = log_forward_array[1:-1], log_backward_array[1:]
         interim = log_forward_array + log_backward_array - log_evidence_forward
 
-        if pseudo_counts is not None:
-            exp_emission_counts = pseduo_counts
+        if pseudo_counts is None:
+            exp_emission_counts = torch.zeros((self.n_states, self.n_obvs), device=self.device)
         else:
-            exp_emission_counts = torch.zeros((self.n_states, self.n_obvs))
+            exp_emission_counts = pseduo_counts
 
         # TODO
         for ii, obv in enumerate(torch.unique(obvs)):
@@ -486,7 +486,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     # TODO BUG? must be even?
-    n_seq, device = 4, None
+    n_seq, device = 20, "cpu"
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     casino = Casino(device=device)
