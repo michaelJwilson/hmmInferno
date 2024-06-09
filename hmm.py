@@ -22,8 +22,8 @@ logger.addHandler(handler)
 
 class CategoricalEmission(torch.nn.Module):
     """
-    Categoical emission from a booked + n_states hidden states, (0, ...),
-    to n_obvs emission types.
+    Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
+    to n_obvs emission classes.
     """
 
     def __init__(self, n_states, n_obvs, device=None):
@@ -37,9 +37,12 @@ class CategoricalEmission(torch.nn.Module):
         # NB number of possible observable states, as opposed to sequence length.
         self.n_obvs = n_obvs
 
-        # NB rows sums to zero, as prob. to emit to any obs. is unity.
-        #    nn.Parameter marks this to be optimised via backprop.
-        self.log_em = torch.randn(n_states, n_obvs)
+        # NB i)  rows sums to zero, as prob. to emit to any obs. is unity.
+        #    ii) nn.Parameter marks this to be optimised via backprop.
+        #    iii)   
+        self.log_em = torch.randn(self.n_states, n_obvs)
+
+        # NB no emission from hidden state.
         self.log_em[0, :] = -99.0
         self.log_em = torch.nn.Parameter(self.log_em)
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
@@ -51,10 +54,10 @@ class CategoricalEmission(torch.nn.Module):
         return self
 
     def sample(self, n_seq):
-        # NB no bookend states
+        # NB bookends are never observed.
         return torch.randint(
             low=1,
-            high=1 + self.n_states,
+            high=1 + self.n_obvs,
             size=(n_seq,),
             dtype=torch.int32,
             device=self.device,
@@ -63,7 +66,7 @@ class CategoricalEmission(torch.nn.Module):
     def sample_states(self, n_seq, bookend=False):
         sequence = torch.randint(
             low=1,
-            high=1 + self.n_states,
+            high=self.n_states,
             size=(n_seq,),
             dtype=torch.int32,
             device=self.device,
@@ -80,6 +83,12 @@ class CategoricalEmission(torch.nn.Module):
         elif obs is None:
             return self.log_em[state, :]
         else:
+            print(state)
+            print(obs)
+
+            print(self.log_em)
+            exit(0)
+            
             return self.log_em[state, obs]
 
     def validate(self):
@@ -500,12 +509,13 @@ if __name__ == "__main__":
         log_trans=None,
         device=device,
     )
-
+    """
     # NB hidden states matched to observed time steps.
     states = categorical.sample_states(n_seq, bookend=True)
     log_like = hmm.log_like(obvs, states)
 
-    """
+    print(log_like)
+    
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
     
