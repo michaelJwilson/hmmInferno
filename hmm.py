@@ -402,7 +402,7 @@ class HMM(torch.nn.Module):
         log_ems = self.emission(None, obvs).T.unsqueeze(2)
 
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
-        log_evidence_backward, log_backward_array = self.log_backward(obvs)
+        _, log_backward_array = self.log_backward(obvs)
 
         # NB limit to observed states
         log_forward_array = log_forward_array[1:-1].unsqueeze(2)
@@ -428,29 +428,24 @@ class HMM(torch.nn.Module):
 
     def exp_emission_counts(self, obvs, pseudo_counts=None):
         """
-        TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
         """
+        # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class?
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
-        log_evidence_backward, log_backward_array = self.log_backward(obvs)
+        _, log_backward_array = self.log_backward(obvs)
 
         # NB no bookend states
-        log_forward_array = log_forward_array[1:-1]
-        log_backward_array = log_backward_array[1:]
-
-        unique_obvs = torch.unique(obvs)
-
+        log_forward_array, log_backward_array = log_forward_array[1:-1], log_backward_array[1:]
         interim = log_forward_array + log_backward_array - log_evidence_forward
 
-        # TODO int?
-        exp_emission_counts = torch.zeros((self.n_states, self.n_obvs))
+        if pseudo_counts is not None:
+            exp_emission_counts = pseduo_counts
+        else:
+            exp_emission_counts = torch.zeros((self.n_states, self.n_obvs))
 
         # TODO
-        for ii, obv in enumerate(unique_obvs):
-            mask = obvs == ii
+        for ii, obv in enumerate(torch.unique(obvs)):
+            mask = (obvs == obv)
             exp_emission_counts[:, ii] = torch.logsumexp(interim[mask], dim=0).exp()
-
-        if pseudo_counts is not None:
-            exp_emission_counts += pseduo_counts
 
         return exp_emission_counts
 
@@ -543,6 +538,7 @@ if __name__ == "__main__":
     #    decoded_states.long(),
     #
     # )
+    
     """
     optimizer = Adam(hmm.parameters(), lr=1.e-2)
 
