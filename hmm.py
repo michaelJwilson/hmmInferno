@@ -1,8 +1,23 @@
+import logging
+import logging.config
+import sys
+
 import torch
-from torch.optim import Adam
 from torch.distributions import negative_binomial
-from utils import get_device
+from torch.optim import Adam
+
 from casino import Casino
+from utils import get_device
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter(
+    "%(asctime)s - %(process)d - %(levelname)s - %(name)s - %(message)s"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 class CategoricalEmission(torch.nn.Module):
@@ -104,6 +119,8 @@ class HMM(torch.nn.Module):
 
         self.device = get_device() if device is None else device
 
+        logging.info(f"Creating HMM with {n_states} hidden states, bookended by 0 at both ends.")
+        
         # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
@@ -112,10 +129,7 @@ class HMM(torch.nn.Module):
         ), f"State mismatch between HMM and Emission, found {self.n_states} but expected {emission_model.n_states}."
 
         # NB number of possible observable states, as opposed to sequence length.
-        self.n_obvs = emission_model.n_obvs
-
-        # NB bookends
-        # self.n_steps = 1 + n_obvs + 1
+        self.n_obvs = emission_model.n_obvs - 1
 
         self.emission_model = emission_model
 
@@ -176,7 +190,14 @@ class HMM(torch.nn.Module):
         """
         Obs. sequence transitions from and to a book end state.
         """
-        return torch.cat((torch.tensor([0], dtype=torch.int32, device=self.device), hidden_states, torch.tensor([0], dtype=torch.int32, device=self.device)), dim=0)
+        return torch.cat(
+            (
+                torch.tensor([0], dtype=torch.int32, device=self.device),
+                hidden_states,
+                torch.tensor([0], dtype=torch.int32, device=self.device),
+            ),
+            dim=0,
+        )
 
     def log_like(self, obvs, states):
         """
@@ -184,6 +205,10 @@ class HMM(torch.nn.Module):
         """
         # NB we must start in a bookend state
         assert states[0] == states[-1] == 0
+
+        # NB
+        assert obvs[0] != 0
+        assert obvs[-1] != 0
 
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone()
@@ -464,6 +489,7 @@ if __name__ == "__main__":
     casino = Casino(device=device)
 
     obvs = casino.sample(n_seq=n_seq)
+    states = categorical.sample(n_seq)
 
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
@@ -474,9 +500,10 @@ if __name__ == "__main__":
     )
 
     # NB hidden states matched to observed time steps.
-    states = hmm.bookend_states(categorical.sample(n_seq))
-    
+    states = hmm.bookend_states(states)
+
     log_like = hmm.log_like(obvs, states)
+
     """
     # NB P(x, pi) with tracing for most probably state sequence
     # log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
