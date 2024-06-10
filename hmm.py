@@ -79,8 +79,8 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         return log_em.log_softmax(dim=1)
-        
-    def emission(self, state, obs):
+
+    def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting.
         """
@@ -90,11 +90,11 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, :]
         else:
             return self.log_em[state, obs]
-        
-    def forward(self, obs):    
+
+    def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs)
-        return self.emission(None, obs).log_softmax(dim=0)
-        
+        return self.log_emission(None, obs).log_softmax(dim=0)
+
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
@@ -149,27 +149,29 @@ class NegativeBinomial:
     def sample(self):
         return self.dist.sample()
 
-    def emission(self, state, obs):
+    def log_emission(self, state, obs):
         raise NotImplementedError()
 
-    
+
 class MarkovTransition(torch.nn.Module):
-    def __init__(self,
+    def __init__(
+        self,
         n_states,
         log_trans=None,
         device=None,
         log_probs_precision=-99.0,
-        ):
-
+    ):
         super(MarkovTransition, self).__init__()
 
         self.device = get_device() if device is None else device
 
-        # NB we assume a bookend state to transition in/out.                                                                                                                                                          
+        # NB we assume a bookend state to transition in/out.
         self.n_states = 1 + n_states
 
         if log_trans is None:
-            self.log_trans = MarkovTransition.init_transitions(self.n_states, device=self.device)
+            self.log_trans = MarkovTransition.init_diag_transitions(
+                self.n_states, device=self.device
+            )
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -180,7 +182,7 @@ class MarkovTransition(torch.nn.Module):
                 self.n_states,
             ), "log_trans must be defined for the bookend state."
 
-            # self.log_trans = log_trans                                                                                                                                                                               
+            # self.log_trans = log_trans
             self.log_trans = self.normalize_transitions(
                 log_trans, log_probs_precision=log_probs_precision
             )
@@ -188,31 +190,41 @@ class MarkovTransition(torch.nn.Module):
         self.log_trans = torch.nn.Parameter(self.log_trans)
         self.log_probs_precision = log_probs_precision
 
-        # NB transitions to/from bookend state should not be trained.                                                                                                                                                 
+        # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
             (self.n_states, self.n_states), requires_grad=False
         )
         self.trans_grad_mask[0, :] = 0
         self.trans_grad_mask[:, 0] = 0
+
+    def log_transition(self, state, second_state):
+        """                                                                                                                                                                                                           
+        Getter for transition matrix with broadcasting.                                                                                                                                                               
+        """
+        if state is None:
+            return self.log_trans[:, second_state]
+        elif second_state is None:
+            return self.log_trans[state, :]
+        elif (state is None) and (second_state is None):
+            return self.log_trans[:, :]
+        else:
+            return self.log_trans[state, second_state]
         
-    def forward(self):
-        raise NotImplementedError()
-    
     @classmethod
-    def init_transitions(
+    def init_diag_transitions(
         cls, n_states, diag_rate=0.95, device=None, log_probs_precision=-99.0
     ):
-        """                                                                                                                                                                                                           
-        Defaults to a diagonal transition matrix.                                                                                                                                                                     
+        """
+        Defaults to a diagonal transition matrix.
         """
         if device is None:
             device = get_device()
 
-        # NB (nstates - 2) to account for diagonal and bookend.                                                                                                                                                        
+        # NB (nstates - 2) to account for diagonal and bookend.
         off_diag_rate = (1.0 - diag_rate) / (n_states - 2.0)
 
         logger.info(
-            f"Initialising transition matrix with (diag_rate, off_diag_rate) = ({diag_rate:.4f}, {off_diag_rate:.4f})"
+            f"Initialising MarkovTransition with (diag_rate, off_diag_rate) = ({diag_rate:.4f}, {off_diag_rate:.4f})"
         )
 
         eye = torch.eye(n_states, device=device)
@@ -227,7 +239,7 @@ class MarkovTransition(torch.nn.Module):
 
         log_trans = log_trans.log()
 
-        log_trans =  MarkovTransition.normalize_transitions(
+        log_trans = MarkovTransition.normalize_transitions(
             log_trans, log_probs_precision=log_probs_precision
         )
 
@@ -235,16 +247,18 @@ class MarkovTransition(torch.nn.Module):
 
     @classmethod
     def normalize_transitions(cls, log_trans, log_probs_precision=-99.0):
-        # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).                                                                                                                     
-        #    ii)  exact value is irrelevant, beyond shifting log probs. by a constant                                                                                                                                 
-        #    iii) but should be equal amongst states - includes bookend to bookend, with log probs ~ -inf.                                                                                                            
-	#    iv) practical requirement on log_probs_precision is generating samples.                                                                                                                                  
+        # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).
+        #    ii)  exact value is irrelevant, beyond shifting log probs. by a constant
+        #    iii) but should be equal amongst states - includes bookend to bookend, with log probs ~ -inf.
+        #    iv) practical requirement on log_probs_precision is generating samples.
+        #    v) we freeze the bookend parameters during training with a mask.
         log_trans[:, 0] = log_probs_precision
         log_trans[0, :] = log_probs_precision
 
-        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html                                                                                                                                   
+        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         log_trans = log_trans.log_softmax(dim=1)
 
+        # NB reconstruct the first row disrupted by softmax.
         log_trans[0, 0] = torch.tensor(log_probs_precision, device=device)
         log_trans[0, 1:] = torch.tensor(
             (1.0 - np.exp(log_probs_precision)) / len(log_trans[0, 1:]), device=device
@@ -252,18 +266,13 @@ class MarkovTransition(torch.nn.Module):
 
         return log_trans
 
-    def transition(self, state, second_state):
-        """                                                                                                                                                                                                           
-        Getter for transition matrix with broadcasting.                                                                                                                                                               
-        """
-        if state is None:
-            return self.log_trans[:, second_state]
-        elif second_state is None:
-            return self.log_trans[state, :]
-        else:
-            return self.log_trans[state, second_state]
-    
+    def forward(self, log_vs):
+        return log_vs.unsqueeze(-1) + self.log_trans.clone().log_softmax(dim=1)
 
+    def to_device(self, device):
+        self.log_trans = self.log_trans.to(device)
+
+        
 class HMM(torch.nn.Module):
     def __init__(
         self,
@@ -301,16 +310,16 @@ class HMM(torch.nn.Module):
 
         self.transition_model = transition_model
         self.emission_model = emission_model
-        
+
         self.to_device(device)
-        
+
         self.validate()
 
     def transition(self, state, second_state):
         return self.transition_model.transition(state, second_state)
-        
+
     def emission(self, state, obs):
-        return self.emission_model.emission(state, obs)
+        return self.emission_model.log_emission(state, obs)
 
     def sample_hidden(self, n_seq, bookend=False):
         last_state = torch.tensor([0], device=self.device)
@@ -318,7 +327,7 @@ class HMM(torch.nn.Module):
 
         # TODO avoid bookend intra? samples.
         for _ in range(n_seq):
-            probs = self.log_trans[last_state, :].clone().exp()
+            probs = self.log_transmission(last_state, None).clone().exp()
             probs[0, 0] = 0.0
 
             # NB sample a new state
@@ -347,7 +356,7 @@ class HMM(torch.nn.Module):
         obvs = []
 
         for state in hidden:
-            probs = self.emission(state, None).exp()
+            probs = self.log_emission(state, None).exp()
             emit = Categorical(probs).sample()
 
             obvs.append(emit.item())
@@ -367,8 +376,8 @@ class HMM(torch.nn.Module):
         last_state = states[0].clone()
 
         for obs, state in zip(obvs[1:-1], states[1:-1]):
-            log_like += self.log_trans[last_state, state]
-            log_like += self.emission(state, obs)
+            log_like += self.log_transition(last_state, state)
+            log_like += self.log_emission(state, obs)
 
             last_state = state
 
@@ -394,10 +403,10 @@ class HMM(torch.nn.Module):
         log_vs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:]):
-            interim = log_vs.unsqueeze(-1) + self.log_trans.clone()
+            interim = log_vs.unsqueeze(-1) + self.log_transmision(None, None)
 
             log_vs, max_states = torch.max(interim, dim=0)
-            log_vs += self.emission(max_states, obs)
+            log_vs += self.log_emission(max_states, obs)
 
             if traced:
                 trace_table[1 + ii, :] = max_states
@@ -442,7 +451,7 @@ class HMM(torch.nn.Module):
 
         for ii, obs in enumerate(obvs):
             log_fs = log_fs.unsqueeze(-1) + self.log_trans.clone()
-            log_fs = self.emission(None, obs) + torch.logsumexp(log_fs, dim=0)
+            log_fs = self.log_emission(None, obs) + torch.logsumexp(log_fs, dim=0)
 
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_trans[:, 0], dim=0)
@@ -459,7 +468,7 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(rev_obvs[:-1]):
             log_bs = (
                 self.log_trans.clone()
-                + self.emission(None, obv).unsqueeze(0)
+                + self.log_emission(None, obv).unsqueeze(0)
                 + log_bs.unsqueeze(0)
             )
 
@@ -467,7 +476,7 @@ class HMM(torch.nn.Module):
 
         obv = rev_obvs[-1]
         log_evidence = torch.logsumexp(
-            self.log_trans[0, :] + self.emission(None, obv) + log_bs, dim=0
+            self.log_trans[0, :] + self.log_emission(None, obv) + log_bs, dim=0
         )
 
         return log_evidence
@@ -486,7 +495,7 @@ class HMM(torch.nn.Module):
 
         for ii, obv in enumerate(obvs):
             interim = log_fs[ii].clone().unsqueeze(-1) + self.log_trans.clone()
-            log_fs[ii + 1] = self.emission(None, obv) + torch.logsumexp(interim, dim=0)
+            log_fs[ii + 1] = self.log_emission(None, obv) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_trans[:, 0]
@@ -510,14 +519,14 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(rev_obvs[:-1]):
             interim = (
                 self.log_trans.clone()
-                + self.emission(None, obv).unsqueeze(0)
+                + self.log_emission(None, obv).unsqueeze(0)
                 + log_bs[-(ii + 1), :].unsqueeze(0)
             )
 
             log_bs[-(ii + 2)] = torch.logsumexp(interim, dim=1)
 
         obv = rev_obvs[-1]
-        log_bs[0] = self.log_trans[0, :] + self.emission(None, obv) + log_bs[1]
+        log_bs[0] = self.log_trans[0, :] + self.log_emission(None, obv) + log_bs[1]
 
         log_evidence = torch.logsumexp(log_bs[0], dim=0)
 
@@ -549,7 +558,7 @@ class HMM(torch.nn.Module):
         """
         # NB we need x_(i+1)
         obvs = torch.roll(obvs.clone(), shifts=-1)
-        log_ems = self.emission(None, obvs).T.unsqueeze(2)
+        log_ems = self.log_emission(None, obvs).T.unsqueeze(2)
 
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         _, log_backward_array = self.log_backward(obvs)
@@ -598,7 +607,7 @@ class HMM(torch.nn.Module):
 
         # TODO
         for ii, obv in enumerate(torch.unique(obvs)):
-            mask = (obvs == obv)
+            mask = obvs == obv
 
             # TODO if mask.any()
             exp_emission_counts[:, ii] = torch.logsumexp(interim[mask], dim=0).exp()
@@ -626,9 +635,9 @@ class HMM(torch.nn.Module):
     def forward(self, obvs):
         # TODO softmax on transition/emission.
         raise NotImplementedError()
-    
+
     def torch_training(self, obvs, optimizer=None, n_epochs=1_000, lr=1.0e-2):
-        optimizer = Adam(self.parameters(), lr=lr, weight_decay=1.e-5)
+        optimizer = Adam(self.parameters(), lr=lr, weight_decay=1.0e-5)
 
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
@@ -652,7 +661,7 @@ class HMM(torch.nn.Module):
             self.emission_model.log_em.grad *= self.emission_model.log_em_grad_mask
 
             optimizer.step()
-            
+
         # NB evaluation, not training, mode.
         self.eval()
 
@@ -689,7 +698,7 @@ class HMM(torch.nn.Module):
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
-        self.log_trans = self.log_trans.to(device)
+        self.transition_model = self.transition_model.to_device(device)
         self.emission_model = self.emission_model.to_device(device)
 
 
@@ -700,21 +709,20 @@ if __name__ == "__main__":
     # TODO BUG? must be even?
     n_seq, device = 20, "cpu"
 
-    # categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     # casino = Casino(device=device)
-
-    transition = MarkovTransition(n_states=4)
+    categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     
-    """
+    transition_model = MarkovTransition(n_states=4)
+
     emission_model = categorical
     emission_model.validate()
 
     # with torch.no_grad():
     # NB initialise with diagonial transitions matrix.
-    log_trans = HMM.init_transitions(
+    log_trans = MarkovTransition.init_diag_transitions(
         emission_model.n_states, device=device, diag_rate=0.5
     )
-
+    
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=emission_model.n_states - 1,
@@ -723,7 +731,7 @@ if __name__ == "__main__":
         device=device,
         name="genHMM",
     )
-
+    """
     # NB hidden states matched to observed time steps.
     hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
     obvs = genHMM.sample_obvs(n_seq, hidden_states)
@@ -825,3 +833,4 @@ if __name__ == "__main__":
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
     """
     logger.info(f"Done.\n\n")
+    
