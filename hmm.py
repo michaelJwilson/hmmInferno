@@ -69,14 +69,14 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
-        log_em.data = CategoricalEmission.normalize_emissions(
+        log_em.data = CategoricalEmission.normalize_emission(
             log_em.data, log_probs_precision=log_probs_precision
         )
 
         return log_em
 
     @classmethod
-    def normalize_emissions(cls, log_em, log_probs_precision=-99.0):
+    def normalize_emission(cls, log_em, log_probs_precision=-99.0):
         # NB emit only a bookend token from the bookend state.
         log_em[0, :] = log_probs_precision
         log_em[0, 0] = 0.0
@@ -117,7 +117,7 @@ class CategoricalEmission(torch.nn.Module):
         """
         Dict with named torch parameters.
         """
-        return {"log_em": CategoricalEmission.normalize_emissions(self.log_em.clone())}
+        return {"log_em": CategoricalEmission.normalize_emission(self.log_em.clone())}
 
 
 class NegativeBinomial:
