@@ -81,6 +81,9 @@ class CategoricalEmission(torch.nn.Module):
         return log_em.log_softmax(dim=1)
         
     def emission(self, state, obs):
+        """
+        Getter for log_em with broadcasting.
+        """
         if state is None:
             return self.log_em[:, obs]
         elif obs is None:
@@ -89,8 +92,11 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, obs]
         
     def forward(self, obs):
+        # TODO BUG verify lookups for obs with different dimensions, e.g. scalar, vector, matrix.
+        raise NotImplementedError("")
+    
         # NB equivalent to normalized self.emission(None, obs)
-        return self.log_em[:, obs].log_softmax(dim=0)
+        return self.emission(None, obs).log_softmax(dim=0)
         
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
@@ -270,6 +276,17 @@ class HMM(torch.nn.Module):
 
         return log_trans
 
+    def transition(self, state, second_state):
+        """
+        Getter for transition matrix with broadcasting.
+        """
+        if state is None:
+            return self.log_trans[:, second_state]
+        elif second_state is None:
+            return self.log_trans[state, :]
+        else:
+            return self.log_trans[state, second_state]
+        
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
@@ -583,7 +600,7 @@ class HMM(torch.nn.Module):
         raise NotImplementedError()
 
     def forward(self, obvs):
-        # TODO softmax
+        # TODO softmax on transition/emission.
         raise NotImplementedError()
     
     def torch_training(self, obvs, optimizer=None, n_epochs=1_000, lr=1.0e-2):
@@ -779,5 +796,4 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
     logger.info(f"Done.\n\n")
