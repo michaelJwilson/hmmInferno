@@ -26,6 +26,7 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
+
     def __init__(self, n_states, n_obvs, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -45,9 +46,12 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB emissions to/from bookend state should not be trained.
         self.log_em_grad_mask = torch.ones(
-            (self.n_states, self.n_obvs), requires_grad=False, device=device
+            (self.n_states, self.n_obvs), requires_grad=False, device=self.device
         )
 
+        self.log_em_grad_mask[0, :] = 0
+        self.log_em_grad_mask[:, 0] = 0
+        
     def init_emission(self, log_probs_precision=-99.0, diag=True):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
@@ -111,6 +115,7 @@ class CategoricalEmission(torch.nn.Module):
         """
         return {"log_em": CategoricalEmission.normalize_emissions(self.log_em.clone())}
 
+
 class NegativeBinomial:
     """
     Models the # of failures in a sequence of IID Bernoulli trials
@@ -150,6 +155,7 @@ class NegativeBinomial:
 
     def log_emission(self, state, obs):
         raise NotImplementedError()
+
 
 class MarkovTransition(torch.nn.Module):
     def __init__(
@@ -192,7 +198,7 @@ class MarkovTransition(torch.nn.Module):
 
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
-            (self.n_states, self.n_states), requires_grad=False
+            (self.n_states, self.n_states), requires_grad=False, device=self.device,
         )
         self.trans_grad_mask[0, :] = 0
         self.trans_grad_mask[:, 0] = 0
@@ -284,7 +290,10 @@ class MarkovTransition(torch.nn.Module):
     @property
     def parameters_dict(self):
         """Dict with named torch parameters."""
-        return {"log_trans": MarkovTransition.normalize_transitions(self.log_trans.clone())}
+        return {
+            "log_trans": MarkovTransition.normalize_transitions(self.log_trans.clone())
+        }
+
 
 class HMM(torch.nn.Module):
     def __init__(
@@ -662,8 +671,9 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=1_000, lr=1.0e-2):
-        optimizer = Adam(self.parameters(), lr=lr, weight_decay=1.0e-5)
+    def torch_training(self, obvs, optimizer=None, n_epochs=300, lr=1.0e-2):
+        # NB weight_decay=1.0e-5
+        optimizer = Adam(self.parameters(), lr=lr)
 
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
@@ -681,12 +691,17 @@ class HMM(torch.nn.Module):
             loss.backward()
 
             # NB we do not optimise transitions to/from bookend state.
-            self.transition_model.log_trans.grad *= self.transition_model.trans_grad_mask
-
+            self.transition_model.log_trans.grad *= (
+                self.transition_model.trans_grad_mask
+            )
+            
             # TODO categorical specific - move to emission?
             self.emission_model.log_em.grad *= self.emission_model.log_em_grad_mask
 
             optimizer.step()
+
+            if epoch % 10 == 0:
+                logger.info(f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}")
 
         # NB evaluation, not training, mode.
         self.eval()
@@ -735,9 +750,9 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_seq, device = 20, "cpu"
-
-    transition_model = MarkovTransition(n_states=4, diag_rate=0.5)
+    n_seq, device = 400, "cpu"
+ 
+    transition_model = MarkovTransition(n_states=4, diag_rate=0.5, device=device)
     transition_model.validate()
 
     # casino = Casino(device=device)
@@ -777,12 +792,10 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
-    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(
-        obvs, n_epochs=1_000
-    )
+    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
 
     logger.info(
-        f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."
+        f"After training with torch for {torch_n_epochs} epochs, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."
     )
     """
     log_like = modelHMM.log_like(obvs, hidden_states)
