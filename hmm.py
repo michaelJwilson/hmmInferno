@@ -4,12 +4,11 @@ import sys
 
 import numpy as np
 import torch
-from torch.distributions import negative_binomial
+from torch.distributions import Categorical, negative_binomial
 from torch.optim import Adam
 
 from casino import Casino
 from utils import bookend_sequence, get_device
-from torch.distributions import Categorical
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -45,7 +44,9 @@ class CategoricalEmission(torch.nn.Module):
 
         # TODO HACK
         # self.log_em = torch.randn(self.n_states, self.n_obvs)
-        self.log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=-99., max=99.)
+        self.log_em = (
+            torch.eye(self.n_states, self.n_obvs).log().clip(min=-99.0, max=99.0)
+        )
 
         # NB nn.Parameter marks this to be optimised via torch.
         self.log_em = torch.nn.Parameter(self.log_em)
@@ -53,16 +54,10 @@ class CategoricalEmission(torch.nn.Module):
         # TODO HACK
         # NB emit a bookend token from the bookend state.
         self.log_em.data[0, :] = -99.0
-        self.log_em.data[0, 0] =   0.0
+        self.log_em.data[0, 0] = 0.0
 
         # NB rows sums to zero, as prob. to emit to any obs. is unity.
         self.log_em.data = self.log_em.data.log_softmax(dim=1)
-
-    def to_device(self, device):
-        self.device = device
-        self.log_em = self.log_em.to(device)
-
-        return self
 
     def emission(self, state, obs):
         if state is None:
@@ -72,15 +67,21 @@ class CategoricalEmission(torch.nn.Module):
         else:
             return self.log_em[state, obs]
 
+    def validate(self):
+        logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
+
+    def to_device(self, device):
+        self.device = device
+        self.log_em = self.log_em.to(device)
+
+        return self
+        
     @property
     def parameters_dict(self):
         """
         Dict with named torch parameters.
         """
         return {"log_em": self.log_em}
-        
-    def validate(self):
-        logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
 
 class NegativeBinomial:
@@ -152,21 +153,23 @@ class HMM(torch.nn.Module):
 
         if log_trans is None:
             self_trans = 0.5
-            other_trans = (1. - self_trans) / (self.n_states)
+            other_trans = (1.0 - self_trans) / (self.n_states)
 
             eye = torch.eye(self.n_states, device=self.device)
-            
-            self.log_trans = self_trans * eye 
-            self.log_trans += other_trans * (torch.ones(self.n_states, self.n_states, device=self.device) - eye)            
+
+            self.log_trans = self_trans * eye
+            self.log_trans += other_trans * (
+                torch.ones(self.n_states, self.n_states, device=self.device) - eye
+            )
             self.log_trans = self.log_trans.log()
-            
+
         else:
             assert isinstance(
                 log_trans, torch.Tensor
             ), "log_trans must be a torch.tensor instance"
 
             assert log_trans.shape == (
-		self.n_states,
+                self.n_states,
                 self.n_states,
             ), "log_trans must include bookend states."
 
@@ -175,16 +178,16 @@ class HMM(torch.nn.Module):
         # NB the probability for any state to transition to the bookend is small (at machine precision).
         #    the exact value should not matter, beyond shifting log probs. by a constant, but it should
         #    be equal amongst states.
-        self.log_trans.data[:,0] = -99.
-        
+        self.log_trans.data[:, 0] = -99.0
+
         self.log_trans = torch.nn.Parameter(self.log_trans)
-        
-        # NB rows sums to zero, as prob. to transition to any state is unity.                                                                                                                                    
+
+        # NB rows sums to zero, as prob. to transition to any state is unity.
         self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
 
         # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
         # self.log_trans.data[0,0] = -torch.inf
-        
+
         self.emission_model = emission_model
         self.to_device(device)
         self.validate()
@@ -192,77 +195,46 @@ class HMM(torch.nn.Module):
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
-    def validate(self):
-        """
-        # NB log probs.
-        assert torch.allclose(
-            self.log_trans.logsumexp(dim=1),
-            torch.zeros(self.log_trans.size(0)).to(device),
-            rtol=1e-05,
-            atol=1e-06,
-        )
-        """
-        logger.info(
-            f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}"
-        )
-        logger.info(f"Transition probability matrix:\n{self.log_trans.exp()}\n")
-
-        self.emission_model.validate()
-
-    @property
-    def parameters_dict(self):
-        """                                                                                                                                                                 Dict with named torch parameters.                                                                                                                                   """
-        # TODO name clash.
-        return {"log_trans": self.log_trans} | self.emission_model.parameters_dict
-        
-    def to_device(self, device):
-        self.log_pi = self.log_pi.to(device)
-        self.log_trans = self.log_trans.to(device)
-        self.emission_model = self.emission_model.to_device(device)
-        self.device = device
-
     def sample_hidden(self, n_seq, bookend=False):
         last_state = torch.tensor([0], device=self.device)
         sequence = [last_state.item()]
-        
+
         for _ in range(n_seq):
-            probs = self.log_trans[last_state,:].clone().exp()
-            probs[0,0] = 0.0
+            probs = self.log_trans[last_state, :].clone().exp()
+            probs[0, 0] = 0.0
 
             # NB sample a new state
             state = Categorical(probs).sample()
             sequence.append(state.item())
-            
+
             last_state = state
 
         sequence = torch.tensor(sequence, dtype=torch.int32, device=self.device)
-            
+
         if bookend:
             sequence = bookend_sequence(sequence, device=self.device)
 
-        return sequence[1:]            
+        return sequence[1:]
 
     def sample_obvs(self, n_seq, hidden=None, bookend=False):
-        # TODO torch 
+        """
+        TODO assumes categorical - move to emission.
+        """
         if hidden is None:
-            hidden = sample_hidden(self, n_seq, bookend=bookend).detach().numpy()
-            
+            hidden = sample_hidden(self, n_seq, bookend=bookend)
+
         if bookend:
-            assert hidden[0] == hidden[-1] == 0
-
-        obvs = []
-        emit_states = np.arange(self.n_states)
-        
-        # TODO assumes categorical
-        for ii, state in enumerate(hidden):
-            probs = self.emission(state, None).exp().detach().numpy()
-            emit = np.random.choice(emit_states, p=probs)
-
-            obvs.append(emit)
+            assert hidden[0].item() == hidden[-1].item() == 0
             
-        obvs = torch.tensor(obvs, dtype=torch.int32, device=self.device)
+        obvs = []
 
-        return obvs
+        for state in hidden:
+            probs = self.emission(state, None).exp()
+            emit = Categorical(probs).sample()
+
+            obvs.append(emit.item())
+
+        return torch.tensor(obvs, dtype=torch.int32, device=self.device)
 
     def log_like(self, obvs, states, bookend=False):
         """
@@ -298,7 +270,7 @@ class HMM(torch.nn.Module):
             trace_table = torch.zeros(
                 len(obvs), self.n_states, dtype=torch.int32, device=self.device
             )
-            trace_table[0,0] = 1
+            trace_table[0, 0] = 1
 
         # NB relies on transition from 0 to any state to be equal.
         log_vs = self.log_pi.clone()
@@ -544,6 +516,34 @@ class HMM(torch.nn.Module):
 
         return n_epochs, self.log_forward_scan(obvs)
 
+    def validate(self):
+        """                                                                                                                                                                                                                                                                   
+        # NB log probs.                                                                                                                                                                                                                                                        
+        assert torch.allclose(                                                                                                                                                                                                                                                 
+            self.log_trans.logsumexp(dim=1),                                                                                                                                                                                                                                   
+            torch.zeros(self.log_trans.size(0)).to(device),                                                                                                                                                                                                                    
+            rtol=1e-05,                                                                                                                                                                                                                                                        
+            atol=1e-06,                                                                                                                                                                                                                                                        
+        )                                                                                                                                                                                                                                                                      
+        """
+        logger.info(
+            f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}"
+        )
+        logger.info(f"Transition probability matrix:\n{self.log_trans.exp()}\n")
+
+        self.emission_model.validate()
+
+    @property
+    def parameters_dict(self):
+        """Dict with named torch parameters."""
+        # TODO name clash.                                                                                                                                                                                                                                                      
+        return {"log_trans": self.log_trans} | self.emission_model.parameters_dict
+
+    def to_device(self, device):
+        self.log_pi = self.log_pi.to(device)
+        self.log_trans = self.log_trans.to(device)
+        self.emission_model = self.emission_model.to_device(device)
+    
 
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
@@ -569,7 +569,7 @@ if __name__ == "__main__":
     # NB hidden states matched to observed time steps.
     hidden_states = hmm.sample_hidden(n_seq, bookend=True)
     obvs = hmm.sample_obvs(n_seq, hidden_states)
-    
+
     logger.info(f"Sampled hidden sequence:\n{hidden_states}")
     logger.info(f"Observed sequence:\n{obvs}")
 
@@ -594,7 +594,7 @@ if __name__ == "__main__":
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward_scan = hmm.log_forward_scan(obvs)
     log_evidence_backward_scan = hmm.log_backward_scan(obvs)
- 
+
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
     log_evidence_backward, log_backward_array = hmm.log_backward(obvs)
@@ -605,18 +605,18 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
     )
-    
+
     assert torch.allclose(log_evidence_forward, log_evidence_backward)
     assert torch.allclose(log_evidence_forward_scan, log_evidence_forward)
 
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
-    
+
     # NB P(pi_i = k | x) for all i.
     log_state_posteriors = hmm.log_state_posterior(obvs)
 
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
-    
+
     # NB argmax_k P(pi_i = k | x) for all i.
     decoded_states = hmm.max_posterior_decoding(obvs)
 
@@ -624,36 +624,40 @@ if __name__ == "__main__":
 
     # NB Satisfying!
     assert torch.allclose(hidden_states, decoded_states)
-    
+
     log_transition_posteriors = hmm.log_transition_posterior(obvs)
 
-    logger.info(                                                                                                                                                                                                                
-        f"Found the log transition posteriors to be:\n{log_transition_posteriors}"                                                                                                                                              
+    logger.info(
+        f"Found the log transition posteriors to be:\n{log_transition_posteriors}"
     )
-    
+
     exp_transition_counts = hmm.exp_transition_counts(obvs)
 
-    logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}") 
-    
+    logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}")
+
     # NB specific to Categorical emission
     exp_emission_counts = hmm.exp_emission_counts(obvs)
 
-    logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")  
-    
+    logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")
+
     baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
 
-    logger.info(                                                                                                                                                                                                                
-        f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"                                                                                                                                             
-    )                                                                                                                                                                                                                            
-    logger.info(                                                                                                                                                                                                                
-        f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}"                                                                                                                                               
+    logger.info(
+        f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
-    
-    torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(obvs, n_epochs=1_000)
+    logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
 
-    logger.info(f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
+    torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(
+        obvs, n_epochs=1_000
+    )
+
+    logger.info(
+        f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method."
+    )
 
     for key in hmm.parameters_dict:
-        logger.info(f"Found optimised parameters for {key} to be:\n{list(hmm.parameters_dict[key])}")
-        
+        logger.info(
+            f"Found optimised parameters for {key} to be:\n{list(hmm.parameters_dict[key])}"
+        )
+
     logger.info(f"Done.\n\n")
