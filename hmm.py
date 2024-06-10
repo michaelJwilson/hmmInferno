@@ -44,12 +44,12 @@ class CategoricalEmission(torch.nn.Module):
 
         self.log_em = self.init_emission()
 
-        # NB transitions to/from bookend state should not be trained.                                                                                                                                                                                                           
+        # NB emissions to/from bookend state should not be trained.
         self.log_em_grad_mask = torch.ones(
             (self.n_states, self.n_obvs), requires_grad=False
         )
-        
-    def init_emission(self, log_probs_precision=-99.0, diag=False):
+
+    def init_emission(self, log_probs_precision=-99.0, diag=True):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
             log_em = (
@@ -75,8 +75,8 @@ class CategoricalEmission(torch.nn.Module):
         log_em[0, 0] = 0.0
 
         log_em[1:, 0] = log_probs_precision
-        
-        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html        
+
+        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         return log_em.log_softmax(dim=1)
 
     def emission(self, state, obs):
@@ -597,7 +597,7 @@ class HMM(torch.nn.Module):
 
             # TODO categorical specific - move to emission?
             self.emission_model.log_em *= self.emission_model.log_em_grad_mask
-            
+
             optimizer.step()
             """
             # TODO HACK
@@ -659,28 +659,28 @@ if __name__ == "__main__":
     emission_model = categorical
     emission_model.validate()
 
-    with torch.no_grad():
-        # NB initialise with diagonial transitions matrix.
-        log_trans = HMM.init_transitions(
-            emission_model.n_states, device=device, diag_rate=0.5
-        )
+    # with torch.no_grad():
+    # NB initialise with diagonial transitions matrix.
+    log_trans = HMM.init_transitions(
+        emission_model.n_states, device=device, diag_rate=0.5
+    )
 
-        # NB (n_states * n_obvs) action space.
-        genHMM = HMM(
-            n_states=emission_model.n_states - 1,
-            emission_model=emission_model,
-            log_trans=log_trans,
-            device=device,
-            name="genHMM",
-        )
+    # NB (n_states * n_obvs) action space.
+    genHMM = HMM(
+        n_states=emission_model.n_states - 1,
+        emission_model=emission_model,
+        log_trans=log_trans,
+        device=device,
+        name="genHMM",
+    )
 
-        # NB hidden states matched to observed time steps.
-        hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
-        obvs = genHMM.sample_obvs(n_seq, hidden_states)
+    # NB hidden states matched to observed time steps.
+    hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
+    obvs = genHMM.sample_obvs(n_seq, hidden_states)
 
     logger.info(f"Generated hidden sequence:\n{hidden_states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-    
+
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=emission_model.n_states - 1,
@@ -690,12 +690,12 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
-    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(                                                                                                                                                                                   
-        obvs, n_epochs=1_000                                                                                                                                                                                                                                 
-    )                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                           
-    logger.info(                                                                                                                                                                                                                                             
-        f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."                                                                                                              
+    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(
+        obvs, n_epochs=1_000
+    )
+
+    logger.info(
+        f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."
     )
 
     log_like = modelHMM.log_like(obvs, hidden_states)
@@ -747,7 +747,7 @@ if __name__ == "__main__":
     decoded_states = modelHMM.max_posterior_decoding(obvs)
 
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
-    
+
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(hidden_states, decoded_states)
 
