@@ -184,10 +184,10 @@ class HMM(torch.nn.Module):
         # self.log_trans.data[0,0] = -torch.inf
 
         # NB transitions to/from bookend state should not be trained.
-        self.trans_grad_mask = torch.ones((self.n_states, self.n_states), dtype=torch.int32, requires_grad=False)
+        self.trans_grad_mask = torch.ones((self.n_states, self.n_states), requires_grad=False)
         self.trans_grad_mask[0,:] = 0
         self.trans_grad_mask[:,0] = 0
-                
+        
         self.emission_model = emission_model
         self.to_device(device)
         self.validate()
@@ -532,9 +532,9 @@ class HMM(torch.nn.Module):
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
-
+            
             # NB we do not optimise transitions to/from bookend state. 
-            self.log_trans.grad *= self.trans_grad_mask
+            # self.log_trans.grad *= self.trans_grad_mask
             
             optimizer.step()
 
