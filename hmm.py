@@ -183,33 +183,40 @@ class HMM(torch.nn.Module):
         self.validate()
 
     @classmethod
-    def init_transitions(cls, n_states, diag_rate=0.5, device=None):
+    def init_transitions(cls, n_states, diag_rate=0.5, device=None, log_probs_precision=-99.):
         """
         """
         if device is None:
             device = get_device()
-                    
-        off_diag_rate = (1.0 - diag_rate) / (n_states)
+
+        # NB (nstates - 2) to account for diagonal and bookend.
+        off_diag_rate = (1.0 - diag_rate) / (n_states - 2.)
 
         eye = torch.eye(n_states, device=device)
 
-        log_trans = diag_rate * eye
-        log_trans = off_diag_rate * (
-            torch.ones(n_states, n_states, device=device) - eye
+        log_trans = diag_rate * eye.clone()
+        log_trans += off_diag_rate * (
+            torch.ones(n_states, n_states, device=device) - eye.clone()
         )
 
+        log_trans[0,0] = torch.tensor(log_probs_precision, device=device).exp()
+        log_trans[0,1:] = 1. / (n_states - 1.)
+        
         return log_trans.log()
 
     @classmethod
     def normalize_transitions(cls, log_trans, log_probs_precision=-99.):
-        # NB the probability for any state to transition to the bookend is small (at machine precision).                                                                                                                          
-        #    the exact value should not matter, beyond shifting log probs. by a constant, but it should                                                                                                                           
-        #    be equal amongst states - this includes bookend to bookend, with log probs -inf. 
+        # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).                                                                                                                          
+        #    ii)  exact value is irrelevant, beyond shifting log probs. by a constant
+        #    iii) but should be equal amongst states - includes bookend to bookend, with log probs ~ -inf.
+        #    iv) practical requirement on log_probs_precision is generating samples.
         log_trans[:, 0] = log_probs_precision
-        log_trans = log_trans.log_softmax(dim=1)
-        
-        # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0) 
+        log_trans[0, :] = log_probs_precision
 
+        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
+        log_trans = log_trans.log_softmax(dim=1)
+        log_trans[0, :] = log_probs_precision
+        
         return log_trans
         
     def emission(self, state, obs):
@@ -219,6 +226,7 @@ class HMM(torch.nn.Module):
         last_state = torch.tensor([0], device=self.device)
         sequence = [last_state.item()]
 
+        # TODO avoid bookend intra? samples.
         for _ in range(n_seq):
             probs = self.log_trans[last_state, :].clone().exp()
             probs[0, 0] = 0.0
@@ -602,8 +610,8 @@ if __name__ == "__main__":
     log_trans = HMM.normalize_transitions(log_trans)
     
     print(log_trans)
+
     exit(0)
-    
     """
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
