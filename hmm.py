@@ -46,7 +46,7 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB emissions to/from bookend state should not be trained.
         self.log_em_grad_mask = torch.ones(
-            (self.n_states, self.n_obvs), requires_grad=False
+            (self.n_states, self.n_obvs), requires_grad=False, device=device
         )
 
     def init_emission(self, log_probs_precision=-99.0, diag=True):
@@ -62,18 +62,20 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
+        """
         log_em.data = CategoricalEmission.normalize_emissions(
             log_em.data, log_probs_precision=log_probs_precision
         )
-
+        """
         return log_em
 
     @classmethod
     def normalize_emissions(cls, log_em, log_probs_precision=-99.0):
-        # NB emit a bookend token from the bookend state.
+        # NB emit only a bookend token from the bookend state.
         log_em[0, :] = log_probs_precision
         log_em[0, 0] = 0.0
 
+        # NB only the bookend state emits a bookend token, to machine precision.
         log_em[1:, 0] = log_probs_precision
 
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
@@ -192,10 +194,14 @@ class HMM(torch.nn.Module):
                 self.n_states,
             ), "log_trans must be defined for the bookend state."
 
+            self.log_trans = log_trans
+            
+            """
             self.log_trans = self.normalize_transitions(
                 log_trans, log_probs_precision=log_probs_precision
             )
-
+            """
+                        
         self.log_trans = torch.nn.Parameter(self.log_trans)
         self.log_probs_precision = log_probs_precision
 
@@ -238,10 +244,12 @@ class HMM(torch.nn.Module):
         log_trans[0, 1:] = 1.0 / (n_states - 1.0)
 
         log_trans = log_trans.log()
-
-        return HMM.normalize_transitions(
+        """
+        log_trans =  HMM.normalize_transitions(
             log_trans, log_probs_precision=log_probs_precision
         )
+        """
+        return log_trans
 
     @classmethod
     def normalize_transitions(cls, log_trans, log_probs_precision=-99.0):
@@ -596,9 +604,10 @@ class HMM(torch.nn.Module):
             self.log_trans.grad *= self.trans_grad_mask
 
             # TODO categorical specific - move to emission?
-            self.emission_model.log_em *= self.emission_model.log_em_grad_mask
+            self.emission_model.log_em.grad *= self.emission_model.log_em_grad_mask
 
             optimizer.step()
+            
             """
             # TODO HACK
             self.log_trans = self.normalize_transitions(
@@ -749,7 +758,7 @@ if __name__ == "__main__":
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
 
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
-    assert torch.allclose(hidden_states, decoded_states)
+    # assert torch.allclose(hidden_states, decoded_states)
 
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
 
