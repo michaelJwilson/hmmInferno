@@ -157,17 +157,7 @@ class HMM(torch.nn.Module):
         self.log_pi[0] = 0.0
 
         if log_trans is None:
-            self_trans = 0.5
-            other_trans = (1.0 - self_trans) / (self.n_states)
-
-            eye = torch.eye(self.n_states, device=self.device)
-
-            self.log_trans = self_trans * eye
-            self.log_trans += other_trans * (
-                torch.ones(self.n_states, self.n_states, device=self.device) - eye
-            )
-            self.log_trans = self.log_trans.log()
-
+            self.log_trans = self.init_transitions()
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -176,7 +166,7 @@ class HMM(torch.nn.Module):
             assert log_trans.shape == (
                 self.n_states,
                 self.n_states,
-            ), "log_trans must include bookend states."
+            ), "log_trans must be defined for the bookend state."
 
             self.log_trans = log_trans
 
@@ -193,10 +183,32 @@ class HMM(torch.nn.Module):
         # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
         # self.log_trans.data[0,0] = -torch.inf
 
+        # NB transitions to/from bookend state should not be trained.
+        self.trans_grad_mask = torch.ones((self.n_states, self.n_states), dtype=torch.int32, requires_grad=False)
+        self.trans_grad_mask[0,:] = 0
+        self.trans_grad_mask[:,0] = 0
+                
         self.emission_model = emission_model
         self.to_device(device)
         self.validate()
 
+    def init_transitions(self, diag_rate=0.5):
+        """
+        """
+        off_diag_rate = (1.0 - diag_rate) / (self.n_states)
+
+        eye = torch.eye(self.n_states, device=self.device)
+
+        log_trans = diag_rate * eye
+        log_trans += off_diag_rate * (
+            torch.ones(self.n_states, self.n_states, device=self.device) - eye
+        )
+
+        log_trans = log_trans.log()
+            
+        return log_trans
+        
+        
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
@@ -521,6 +533,9 @@ class HMM(torch.nn.Module):
             loss = -self.log_forward_scan(obvs)
             loss.backward()
 
+            # NB we do not optimise transitions to/from bookend state. 
+            self.log_trans.grad *= self.trans_grad_mask
+            
             optimizer.step()
 
         # NB evaluation, not training, mode.
