@@ -166,10 +166,9 @@ class HMM(torch.nn.Module):
                 self.n_states,
             ), "log_trans must be defined for the bookend state."
 
-            self.log_trans = log_trans
-
+            self.log_trans = self.normalize_transitions(log_trans, log_probs_precision=log_probs_precision)
+            
         self.log_trans = torch.nn.Parameter(self.log_trans)
-        self.log_trans.data = self.normalize_transitions(self.log_trans.data, log_probs_precision=log_probs_precision)
         
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
@@ -203,8 +202,10 @@ class HMM(torch.nn.Module):
         log_trans[0,0] = torch.tensor(log_probs_precision, device=device).exp()
         log_trans[0,1:] = 1. / (n_states - 1.)
         
-        return log_trans.log()
-
+        log_trans = log_trans.log()
+        
+        return HMM.normalize_transitions(log_trans, log_probs_precision=log_probs_precision)
+        
     @classmethod
     def normalize_transitions(cls, log_trans, log_probs_precision=-99.):
         # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).                                                                                                                          
@@ -612,8 +613,7 @@ if __name__ == "__main__":
 
     # NB initialise with diagonial transitions matrix.
     log_trans = HMM.init_transitions(emission_model.n_states, device=device, diag_rate=0.5)
-    log_trans = HMM.normalize_transitions(log_trans)
-
+    
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=emission_model.n_states - 1,
