@@ -215,7 +215,9 @@ class HMM(torch.nn.Module):
 
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         log_trans = log_trans.log_softmax(dim=1)
-        log_trans[0, :] = log_probs_precision
+
+        log_trans[0,0] = torch.tensor(log_probs_precision, device=device)
+        log_trans[0,1:] = torch.tensor((1. - np.exp(log_probs_precision)) / len(log_trans[0,1:]), device=device).log()
         
         return log_trans
         
