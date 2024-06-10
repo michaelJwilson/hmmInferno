@@ -169,18 +169,8 @@ class HMM(torch.nn.Module):
             self.log_trans = log_trans
 
         self.log_trans = torch.nn.Parameter(self.log_trans)
-            
-        # NB the probability for any state to transition to the bookend is small (at machine precision).
-        #    the exact value should not matter, beyond shifting log probs. by a constant, but it should
-        #    be equal amongst states - this includes bookend to bookend, with log probs -inf.
-        self.log_trans.data[:, 0] = log_probs_precision
+        self.log_trans = self.normalize_transitions(self.log_trans.data, log_probs_precision=log_probs_precision)
         
-        # NB rows sums to zero, as prob. to transition to any state is unity.
-        self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
-
-        # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
-
-
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
             (self.n_states, self.n_states), requires_grad=False
@@ -210,6 +200,18 @@ class HMM(torch.nn.Module):
 
         return log_trans.log()
 
+    @classmethod
+    def normalize_transitions(cls, log_trans, log_probs_precision=-99.):
+        # NB the probability for any state to transition to the bookend is small (at machine precision).                                                                                                                          
+        #    the exact value should not matter, beyond shifting log probs. by a constant, but it should                                                                                                                           
+        #    be equal amongst states - this includes bookend to bookend, with log probs -inf. 
+        log_trans[:, 0] = log_probs_precision
+        log_trans = log_trans.log_softmax(dim=1)
+        
+        # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0) 
+
+        return log_trans
+        
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
@@ -597,7 +599,8 @@ if __name__ == "__main__":
     emission_model.validate()
 
     log_trans = HMM.init_transitions(emission_model.n_states, device=device)
-
+    log_trans = HMM.normalize_transitions(log_trans)
+    
     print(log_trans)
     exit(0)
     
