@@ -273,7 +273,7 @@ class MarkovTransition(torch.nn.Module):
         logger.info(f"Transition log probs matrix for MarkovTransition:\n{self.log_trans}\n")
     
     def forward(self, log_vs):
-        return log_vs.unsqueeze(-1) + self.log_trans.clone().log_softmax(dim=1)
+        return log_vs.unsqueeze(-1) + self.log_trans.log_softmax(dim=1)
 
     def to_device(self, device):
         self.log_trans.data = self.log_trans.data.to(device)
@@ -419,8 +419,10 @@ class HMM(torch.nn.Module):
         log_vs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:]):
-            interim = log_vs.unsqueeze(-1) + self.log_transition(None, None)
-            
+            # DEPRECATE
+            # interim = log_vs.unsqueeze(-1) + self.log_transition(None, None)
+            interim = self.transition_model.forward(log_vs)
+
             log_vs, max_states = torch.max(interim, dim=0)
             log_vs += self.log_emission(max_states, obs)
 
@@ -466,8 +468,10 @@ class HMM(torch.nn.Module):
         log_fs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs):
-            log_fs = log_fs.unsqueeze(-1) + self.log_transition(None,None).clone()
-            log_fs = self.log_emission(None, obs) + torch.logsumexp(log_fs, dim=0)
+            # DEPRECATE
+            # interim = log_fs.unsqueeze(-1) + self.log_transition(None,None).clone()
+            interim = self.transition_model.forward(log_fs)            
+            log_fs = self.log_emission(None, obs) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state.
         return torch.logsumexp(log_fs + self.log_transition(None, 0), dim=0)
@@ -510,7 +514,10 @@ class HMM(torch.nn.Module):
         log_fs[0] = log_fs_init
 
         for ii, obv in enumerate(obvs):
-            interim = log_fs[ii].clone().unsqueeze(-1) + self.log_transition(None, None).clone()
+            # DEPRECATE
+            # interim = log_fs[ii].clone().unsqueeze(-1) + self.log_transition(None, None).clone()
+            interim = self.transition_model.forward(log_fs[ii])
+            
             log_fs[ii + 1] = self.log_emission(None, obv) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state.
@@ -720,7 +727,7 @@ class HMM(torch.nn.Module):
 
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
-    torch.manual_seed(123)
+    torch.manual_seed(314)
 
     # TODO BUG? must be even?
     n_seq, device = 20, "cpu"
