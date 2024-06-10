@@ -506,6 +506,10 @@ class HMM(torch.nn.Module):
     def torch_training(self, obvs, optimizer=None, n_epochs=1, lr=1.0e-2):
         optimizer = Adam(self.parameters(), lr=lr)
 
+        # NB set model to training mode - important for batch normalization & dropout -
+        #    unnecessaary here, but best practice.
+        self.train()
+        
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
@@ -514,6 +518,9 @@ class HMM(torch.nn.Module):
 
             optimizer.step()
 
+        # NB evaluation, not training, mode.
+        self.eval()
+            
         return n_epochs, self.log_forward_scan(obvs)
 
     def validate(self):
