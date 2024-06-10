@@ -45,25 +45,23 @@ class CategoricalEmission(torch.nn.Module):
         self.log_em = self.init_emission()
 
     def init_emission(self):
-        # TODO HACK                                                                                                                                                                                                          
-        # log_em = torch.randn(self.n_states, self.n_obvs)                                                                                                                                                              
-        log_em = (
-            torch.eye(self.n_states, self.n_obvs).log().clip(min=-99.0, max=99.0)
-        )
+        # TODO HACK
+        # log_em = torch.randn(self.n_states, self.n_obvs)
+        log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=-99.0, max=99.0)
 
-        # NB nn.Parameter marks this to be optimised via torch.                                                                                                                                                              
+        # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
 
-        # TODO HACK                                                                                                                                                                                                          
-        # NB emit a bookend token from the bookend state.                                                                                                                                                                   
+        # TODO HACK
+        # NB emit a bookend token from the bookend state.
         log_em.data[0, :] = -99.0
         log_em.data[0, 0] = 0.0
 
-        # NB rows sums to zero, as prob. to emit to any obs. is unity.                                                                                                                                                       
+        # NB rows sums to zero, as prob. to emit to any obs. is unity.
         log_em.data = log_em.data.log_softmax(dim=1)
 
         return log_em
-                
+
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -80,7 +78,7 @@ class CategoricalEmission(torch.nn.Module):
         self.log_em = self.log_em.to(device)
 
         return self
-        
+
     @property
     def parameters_dict(self):
         """
@@ -184,17 +182,18 @@ class HMM(torch.nn.Module):
         # self.log_trans.data[0,0] = -torch.inf
 
         # NB transitions to/from bookend state should not be trained.
-        self.trans_grad_mask = torch.ones((self.n_states, self.n_states), requires_grad=False)
-        self.trans_grad_mask[0,:] = 0
-        self.trans_grad_mask[:,0] = 0
-        
+        self.trans_grad_mask = torch.ones(
+            (self.n_states, self.n_states), requires_grad=False
+        )
+        self.trans_grad_mask[0, :] = 0
+        self.trans_grad_mask[:, 0] = 0
+
         self.emission_model = emission_model
         self.to_device(device)
         self.validate()
 
     def init_transitions(self, diag_rate=0.5):
-        """
-        """
+        """ """
         off_diag_rate = (1.0 - diag_rate) / (self.n_states)
 
         eye = torch.eye(self.n_states, device=self.device)
@@ -205,10 +204,9 @@ class HMM(torch.nn.Module):
         )
 
         log_trans = log_trans.log()
-            
+
         return log_trans
-        
-        
+
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
@@ -242,7 +240,7 @@ class HMM(torch.nn.Module):
 
         if bookend:
             assert hidden[0].item() == hidden[-1].item() == 0
-            
+
         obvs = []
 
         for state in hidden:
@@ -526,32 +524,42 @@ class HMM(torch.nn.Module):
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
         self.train()
-        
+
+        for key in self.parameters_dict:
+            logger.info(
+                f"Ready to train {key} parameter with torch, initialised to:\n{hmm.parameters_dict[key]}"
+            )
+
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
-            
-            # NB we do not optimise transitions to/from bookend state. 
-            # self.log_trans.grad *= self.trans_grad_mask
-            
+
+            # NB we do not optimise transitions to/from bookend state.
+            self.log_trans.grad *= self.trans_grad_mask
+
             optimizer.step()
 
         # NB evaluation, not training, mode.
         self.eval()
-            
+
+        for key in hmm.parameters_dict:
+            logger.info(
+                f"Found optimised parameters for {key} to be:\n{hmm.parameters_dict[key]}"
+            )
+
         return n_epochs, self.log_forward_scan(obvs)
 
     def validate(self):
-        """                                                                                                                                                                                                                                                                   
-        # NB log probs.                                                                                                                                                                                                                                                        
-        assert torch.allclose(                                                                                                                                                                                                                                                 
-            self.log_trans.logsumexp(dim=1),                                                                                                                                                                                                                                   
-            torch.zeros(self.log_trans.size(0)).to(device),                                                                                                                                                                                                                    
-            rtol=1e-05,                                                                                                                                                                                                                                                        
-            atol=1e-06,                                                                                                                                                                                                                                                        
-        )                                                                                                                                                                                                                                                                      
+        """
+        # NB log probs.
+        assert torch.allclose(
+            self.log_trans.logsumexp(dim=1),
+            torch.zeros(self.log_trans.size(0)).to(device),
+            rtol=1e-05,
+            atol=1e-06,
+        )
         """
         logger.info(
             f"Initialised HMM starting in bookend state with log probability matrix:\n{self.log_pi}"
@@ -563,14 +571,14 @@ class HMM(torch.nn.Module):
     @property
     def parameters_dict(self):
         """Dict with named torch parameters."""
-        # TODO name clash.                                                                                                                                                                                                                                                      
+        # TODO name clash.
         return {"log_trans": self.log_trans} | self.emission_model.parameters_dict
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
         self.log_trans = self.log_trans.to(device)
         self.emission_model = self.emission_model.to_device(device)
-    
+
 
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
@@ -672,6 +680,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
+
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
 
     torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(
@@ -681,10 +690,5 @@ if __name__ == "__main__":
     logger.info(
         f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method."
     )
-
-    for key in hmm.parameters_dict:
-        logger.info(
-            f"Found optimised parameters for {key} to be:\n{list(hmm.parameters_dict[key])}"
-        )
 
     logger.info(f"Done.\n\n")
