@@ -44,7 +44,7 @@ class CategoricalEmission(torch.nn.Module):
 
         # TODO HACK
         # self.log_em = torch.randn(self.n_states, self.n_obvs)
-        self.log_em = torch.eye(self.n_states, self.n_obvs).log()
+        self.log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=-99., max=99.)
 
         # NB nn.Parameter marks this to be optimised via torch.
         self.log_em = torch.nn.Parameter(self.log_em)
@@ -143,9 +143,15 @@ class HMM(torch.nn.Module):
         self.log_pi[0] = 0.0
 
         if log_trans is None:
-            self.log_trans = torch.randn(
-                self.n_states, self.n_states, device=self.device
-            )
+            self_trans = 0.5
+            other_trans = (1. - self_trans) / (self.n_states)
+
+            eye = torch.eye(self.n_states, device=self.device)
+            
+            self.log_trans = self_trans * eye 
+            self.log_trans += other_trans * (torch.ones(self.n_states, self.n_states, device=self.device) - eye)            
+            self.log_trans = self.log_trans.log()
+            
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -158,15 +164,18 @@ class HMM(torch.nn.Module):
 
             self.log_trans = log_trans
 
+        # NB the probability for any state to transition to the bookend is small (at machine precision).
+        #    the exact value should not matter, beyond shifting log probs. by a constant, but it should
+        #    be equal amongst states.
         self.log_trans.data[:,0] = -99.
-            
+        
         self.log_trans = torch.nn.Parameter(self.log_trans)
         
         # NB rows sums to zero, as prob. to transition to any state is unity.                                                                                                                                    
         self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
 
-        self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
-        self.log_trans.data[0,0] = -torch.inf
+        # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
+        # self.log_trans.data[0,0] = -torch.inf
         
         self.emission_model = emission_model
         self.to_device(device)
@@ -243,7 +252,7 @@ class HMM(torch.nn.Module):
 
         return obvs
 
-    def log_like(self, obvs, states):
+    def log_like(self, obvs, states, bookend=False):
         """
         Eqn. (3.6) of Durbin.
         """
@@ -255,7 +264,7 @@ class HMM(torch.nn.Module):
         log_like = self.log_pi[0].clone()
         last_state = states[0].clone()
 
-        for obs, state in zip(obvs[1:], states[1:]):
+        for obs, state in zip(obvs[1:-1], states[1:-1]):
             log_like += self.log_trans[last_state, state]
             log_like += self.emission(state, obs)
 
@@ -277,19 +286,22 @@ class HMM(torch.nn.Module):
             trace_table = torch.zeros(
                 len(obvs), self.n_states, dtype=torch.int32, device=self.device
             )
+            trace_table[0,0] = 1
 
+        # NB relies on transition from 0 to any state to be equal.
         log_vs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:]):
             interim = log_vs.unsqueeze(-1) + self.log_trans.clone()
 
-            log_vs, states = torch.max(interim, dim=0)
-            log_vs += self.emission(states, obs)
+            log_vs, max_states = torch.max(interim, dim=0)
+            log_vs += self.emission(max_states, obs)
 
             if traced:
-                trace_table[1 + ii, :] = states
+                trace_table[1 + ii, :] = max_states
 
-        # NB finally forced transition into the book end state.
+        # NB finally forced transition into the book end state.  Relies on transition
+        #    from any state to 0 to be equal.
         log_vs += self.log_trans[:, 0]
         log_joint_prob, penultimate_state = torch.max(log_vs, dim=0)
 
@@ -548,13 +560,11 @@ if __name__ == "__main__":
     
     logger.info(f"Sampled hidden sequence:\n{hidden_states}")
     logger.info(f"Observed sequence:\n{obvs}")
-    
-    """
+
     log_like = hmm.log_like(obvs, hidden_states)
 
-    logger.info(f"Assumed Hidden sequence: {hidden_states}")
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
-
+    """
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = hmm.viterbi(obvs, traced=True)
 
@@ -568,7 +578,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{viterbi_decoded_states}"
     )
-
+    
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward = hmm.log_forward_scan(obvs)
     log_evidence_backward = hmm.log_backward_scan(obvs)
