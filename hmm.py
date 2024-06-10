@@ -213,7 +213,7 @@ class HMM(torch.nn.Module):
     def parameters_dict(self):
         """                                                                                                                                                                 Dict with named torch parameters.                                                                                                                                   """
         # TODO name clash.
-        return {"log_trans": self.log_trans} | self.emission_model.parameters
+        return {"log_trans": self.log_trans} | self.emission_model.parameters_dict
         
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
@@ -652,5 +652,8 @@ if __name__ == "__main__":
     torch_n_epochs, torch_log_evidence_forward = hmm.torch_training(obvs, n_epochs=1_000)
 
     logger.info(f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method.")
-    logger.info(f"Found optimised parameters to be:\n{list(hmm.parameters())}")     
+
+    for key in hmm.parameters_dict:
+        logger.info(f"Found optimised parameters for {key} to be:\n{list(hmm.parameters_dict[key])}")
+        
     logger.info(f"Done.\n\n")
