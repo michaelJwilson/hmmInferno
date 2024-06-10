@@ -1,4 +1,4 @@
-import logging
+Aimport logging
 import logging.config
 import sys
 import time
@@ -117,7 +117,7 @@ class CategoricalEmission(torch.nn.Module):
         return {"log_em": CategoricalEmission.normalize_emissions(self.log_em.clone())}
 
 
-class NegativeBinomial:
+class NegativeBinomial():
     """
     Models the # of failures in a sequence of IID Bernoulli trials
     before a specified (non-random) # of successes, r.
@@ -876,7 +876,5 @@ if __name__ == "__main__":
     logger.info(
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
-
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
