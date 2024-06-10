@@ -712,6 +712,10 @@ class HMM(torch.nn.Module):
                 f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
             )
 
+        logger.info(
+	    f"After training with torch for {n_epochs} epochs, found the log evidence to be {self.log_forward_scan(obvs):.4f} by the forward method."
+        )
+            
         return n_epochs, self.log_forward_scan(obvs)
 
     def validate(self):
@@ -795,11 +799,7 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
-    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-
-    logger.info(
-        f"After training with torch for {torch_n_epochs} epochs, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."
-    )
+    # torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
 
     log_like = modelHMM.log_like(obvs, hidden_states)
 
@@ -834,14 +834,12 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
     )
-    """
-    # BUG! TODO
-    assert torch.allclose(log_evidence_forward, log_evidence_backward)
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
-    """
-    
+
+    assert torch.allclose(log_evidence_forward, log_evidence_backward)
+
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
 
