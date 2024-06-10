@@ -49,7 +49,7 @@ class CategoricalEmission(torch.nn.Module):
             (self.n_states, self.n_obvs), requires_grad=False, device=device
         )
 
-    def init_emission(self, log_probs_precision=-99.0, diag=True):
+    def init_emission(self, log_probs_precision=-99.0, diag=False):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
             log_em = (
@@ -62,11 +62,11 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
-        """
+
         log_em.data = CategoricalEmission.normalize_emissions(
             log_em.data, log_probs_precision=log_probs_precision
         )
-        """
+
         return log_em
 
     @classmethod
@@ -194,13 +194,10 @@ class HMM(torch.nn.Module):
                 self.n_states,
             ), "log_trans must be defined for the bookend state."
 
-            self.log_trans = log_trans
-            
-            """
+            # self.log_trans = log_trans            
             self.log_trans = self.normalize_transitions(
                 log_trans, log_probs_precision=log_probs_precision
             )
-            """
                         
         self.log_trans = torch.nn.Parameter(self.log_trans)
         self.log_probs_precision = log_probs_precision
@@ -244,11 +241,11 @@ class HMM(torch.nn.Module):
         log_trans[0, 1:] = 1.0 / (n_states - 1.0)
 
         log_trans = log_trans.log()
-        """
+
         log_trans =  HMM.normalize_transitions(
             log_trans, log_probs_precision=log_probs_precision
         )
-        """
+
         return log_trans
 
     @classmethod
@@ -608,13 +605,6 @@ class HMM(torch.nn.Module):
 
             optimizer.step()
             
-            """
-            # TODO HACK
-            self.log_trans = self.normalize_transitions(
-                self.log_trans, log_probs_precision=self.log_probs_precision
-            )
-            """
-
         # NB evaluation, not training, mode.
         self.eval()
 
