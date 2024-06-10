@@ -731,8 +731,8 @@ if __name__ == "__main__":
     decoded_states = modelHMM.max_posterior_decoding(obvs)
 
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
-    """
-    # NB satisfying!
+    
+    # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(hidden_states, decoded_states)
 
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
@@ -757,5 +757,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    """
+
     logger.info(f"Done.\n\n")
