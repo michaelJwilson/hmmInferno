@@ -44,17 +44,17 @@ class CategoricalEmission(torch.nn.Module):
 
         self.log_em = self.init_emission()
 
-    def init_emission(self):
+    def init_emission(self, log_probs_precision=-99.):
         # TODO HACK
         # log_em = torch.randn(self.n_states, self.n_obvs)
-        log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=-99.0, max=99.0)
+        log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=log_probs_precision, max=-log_probs_precision)
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
 
         # TODO HACK
         # NB emit a bookend token from the bookend state.
-        log_em.data[0, :] = -99.0
+        log_em.data[0, :] = log_probs_precision
         log_em.data[0, 0] = 0.0
 
         # NB rows sums to zero, as prob. to emit to any obs. is unity.
@@ -129,7 +129,7 @@ class NegativeBinomial:
 
 
 class HMM(torch.nn.Module):
-    def __init__(self, n_states, emission_model, log_trans=None, device=None):
+    def __init__(self, n_states, emission_model, log_trans=None, device=None, log_probs_precision=-99.):
         super(HMM, self).__init__()
 
         self.device = get_device() if device is None else device
@@ -149,13 +149,13 @@ class HMM(torch.nn.Module):
         self.n_obvs = emission_model.n_obvs
 
         # NB We start (and end) in the bookend state.  No gradient required.
-        self.log_pi = -99.0 * torch.ones(
+        self.log_pi = log_probs_precision * torch.ones(
             self.n_states, requires_grad=False, device=self.device
         )
         self.log_pi[0] = 0.0
 
         if log_trans is None:
-            self.log_trans = self.init_transitions()
+            self.log_trans = HMM.init_transitions(self.n_states, device=self.device)
         else:
             assert isinstance(
                 log_trans, torch.Tensor
@@ -168,18 +168,18 @@ class HMM(torch.nn.Module):
 
             self.log_trans = log_trans
 
+        self.log_trans = torch.nn.Parameter(self.log_trans)
+            
         # NB the probability for any state to transition to the bookend is small (at machine precision).
         #    the exact value should not matter, beyond shifting log probs. by a constant, but it should
-        #    be equal amongst states.
-        self.log_trans.data[:, 0] = -99.0
-
-        self.log_trans = torch.nn.Parameter(self.log_trans)
-
+        #    be equal amongst states - this includes bookend to bookend, with log probs -inf.
+        self.log_trans.data[:, 0] = log_probs_precision
+        
         # NB rows sums to zero, as prob. to transition to any state is unity.
         self.log_trans.data = self.log_trans.data.log_softmax(dim=1)
 
         # self.log_trans.data[0][1:] = self.log_trans.data[0][1:].log_softmax(dim=0)
-        # self.log_trans.data[0,0] = -torch.inf
+
 
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
@@ -192,20 +192,23 @@ class HMM(torch.nn.Module):
         self.to_device(device)
         self.validate()
 
-    def init_transitions(self, diag_rate=0.5):
-        """ """
-        off_diag_rate = (1.0 - diag_rate) / (self.n_states)
+    @classmethod
+    def init_transitions(cls, n_states, diag_rate=0.5, device=None):
+        """
+        """
+        if device is None:
+            device = get_device()
+                    
+        off_diag_rate = (1.0 - diag_rate) / (n_states)
 
-        eye = torch.eye(self.n_states, device=self.device)
+        eye = torch.eye(n_states, device=device)
 
         log_trans = diag_rate * eye
-        log_trans += off_diag_rate * (
-            torch.ones(self.n_states, self.n_states, device=self.device) - eye
+        log_trans = off_diag_rate * (
+            torch.ones(n_states, n_states, device=device) - eye
         )
 
-        log_trans = log_trans.log()
-
-        return log_trans
+        return log_trans.log()
 
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
@@ -593,9 +596,15 @@ if __name__ == "__main__":
     emission_model = categorical
     emission_model.validate()
 
+    log_trans = HMM.init_transitions(emission_model.n_states, device=device)
+
+    print(log_trans)
+    exit(0)
+    
+    """
     # NB (n_states * n_obvs) action space.
     hmm = HMM(
-        n_states=emission_model.n_states - 1,
+        n_states=emission_model.n_states,
         emission_model=emission_model,
         log_trans=None,
         device=device,
@@ -657,7 +666,7 @@ if __name__ == "__main__":
 
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
 
-    # NB Satisfying!
+    # NB satisfying!
     assert torch.allclose(hidden_states, decoded_states)
 
     log_transition_posteriors = hmm.log_transition_posterior(obvs)
@@ -688,7 +697,7 @@ if __name__ == "__main__":
     )
 
     logger.info(
-        f"After training with torch for {torch_n_epochs}, found the evidence to be {torch_log_evidence_forward:.4f} by the forward method."
+        f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."
     )
-
+    """
     logger.info(f"Done.\n\n")
