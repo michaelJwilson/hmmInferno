@@ -44,10 +44,14 @@ class CategoricalEmission(torch.nn.Module):
 
         self.log_em = self.init_emission()
 
-    def init_emission(self, log_probs_precision=-99.):
+    def init_emission(self, log_probs_precision=-99.0):
         # TODO HACK
         # log_em = torch.randn(self.n_states, self.n_obvs)
-        log_em = torch.eye(self.n_states, self.n_obvs).log().clip(min=log_probs_precision, max=-log_probs_precision)
+        log_em = (
+            torch.eye(self.n_states, self.n_obvs)
+            .log()
+            .clip(min=log_probs_precision, max=-log_probs_precision)
+        )
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
@@ -129,13 +133,22 @@ class NegativeBinomial:
 
 
 class HMM(torch.nn.Module):
-    def __init__(self, n_states, emission_model, log_trans=None, device=None, log_probs_precision=-99.):
+    def __init__(
+        self,
+        n_states,
+        emission_model,
+        log_trans=None,
+        device=None,
+        log_probs_precision=-99.0,
+        name="HMM"
+    ):
         super(HMM, self).__init__()
 
+        self.name = name
         self.device = get_device() if device is None else device
 
         logger.info(
-            f"Creating HMM with {n_states} hidden states, bookended by 0 at both ends."
+            f"Creating {name} with {n_states} hidden states, bookended by 0 at both ends."
         )
 
         # NB we assume a bookend state to transition in/out.
@@ -166,10 +179,13 @@ class HMM(torch.nn.Module):
                 self.n_states,
             ), "log_trans must be defined for the bookend state."
 
-            self.log_trans = self.normalize_transitions(log_trans, log_probs_precision=log_probs_precision)
-            
+            self.log_trans = self.normalize_transitions(
+                log_trans, log_probs_precision=log_probs_precision
+            )
+
         self.log_trans = torch.nn.Parameter(self.log_trans)
-        
+        self.log_probs_precision = log_probs_precision
+
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
             (self.n_states, self.n_states), requires_grad=False
@@ -182,15 +198,17 @@ class HMM(torch.nn.Module):
         self.validate()
 
     @classmethod
-    def init_transitions(cls, n_states, diag_rate=0.95, device=None, log_probs_precision=-99.):
+    def init_transitions(
+        cls, n_states, diag_rate=0.95, device=None, log_probs_precision=-99.0
+    ):
         """
-        Defaults to a diagonal transition matrix. 
+        Defaults to a diagonal transition matrix.
         """
         if device is None:
             device = get_device()
 
         # NB (nstates - 2) to account for diagonal and bookend.
-        off_diag_rate = (1.0 - diag_rate) / (n_states - 2.)
+        off_diag_rate = (1.0 - diag_rate) / (n_states - 2.0)
 
         eye = torch.eye(n_states, device=device)
 
@@ -199,16 +217,18 @@ class HMM(torch.nn.Module):
             torch.ones(n_states, n_states, device=device) - eye.clone()
         )
 
-        log_trans[0,0] = torch.tensor(log_probs_precision, device=device).exp()
-        log_trans[0,1:] = 1. / (n_states - 1.)
-        
+        log_trans[0, 0] = torch.tensor(log_probs_precision, device=device).exp()
+        log_trans[0, 1:] = 1.0 / (n_states - 1.0)
+
         log_trans = log_trans.log()
-        
-        return HMM.normalize_transitions(log_trans, log_probs_precision=log_probs_precision)
-        
+
+        return HMM.normalize_transitions(
+            log_trans, log_probs_precision=log_probs_precision
+        )
+
     @classmethod
-    def normalize_transitions(cls, log_trans, log_probs_precision=-99.):
-        # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).                                                                                                                          
+    def normalize_transitions(cls, log_trans, log_probs_precision=-99.0):
+        # NB i) log_probs to transition to the bookend is small (at machine log_probs_precision).
         #    ii)  exact value is irrelevant, beyond shifting log probs. by a constant
         #    iii) but should be equal amongst states - includes bookend to bookend, with log probs ~ -inf.
         #    iv) practical requirement on log_probs_precision is generating samples.
@@ -218,11 +238,13 @@ class HMM(torch.nn.Module):
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         log_trans = log_trans.log_softmax(dim=1)
 
-        log_trans[0,0] = torch.tensor(log_probs_precision, device=device)
-        log_trans[0,1:] = torch.tensor((1. - np.exp(log_probs_precision)) / len(log_trans[0,1:]), device=device).log()
-        
+        log_trans[0, 0] = torch.tensor(log_probs_precision, device=device)
+        log_trans[0, 1:] = torch.tensor(
+            (1.0 - np.exp(log_probs_precision)) / len(log_trans[0, 1:]), device=device
+        ).log()
+
         return log_trans
-        
+
     def emission(self, state, obs):
         return self.emission_model.emission(state, obs)
 
@@ -558,6 +580,11 @@ class HMM(torch.nn.Module):
 
             optimizer.step()
 
+            # TODO HACK
+            self.log_trans = self.normalize_transitions(
+                self.log_trans, log_probs_precision=self.log_probs_precision
+            )
+
         # NB evaluation, not training, mode.
         self.eval()
 
@@ -590,7 +617,7 @@ class HMM(torch.nn.Module):
         """Dict with named torch parameters."""
         # TODO name clash.
         # TODO HACK dropeed emission
-        return {"log_trans": self.log_trans} ## | self.emission_model.parameters_dict
+        return {"log_trans": self.log_trans}  ## | self.emission_model.parameters_dict
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
@@ -612,14 +639,17 @@ if __name__ == "__main__":
     emission_model.validate()
 
     # NB initialise with diagonial transitions matrix.
-    log_trans = HMM.init_transitions(emission_model.n_states, device=device, diag_rate=0.5)
-    
+    log_trans = HMM.init_transitions(
+        emission_model.n_states, device=device, diag_rate=0.5
+    )
+
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=emission_model.n_states - 1,
         emission_model=emission_model,
         log_trans=log_trans,
         device=device,
+        name="genHMM"
     )
 
     # NB hidden states matched to observed time steps.
@@ -635,8 +665,10 @@ if __name__ == "__main__":
         emission_model=emission_model,
         log_trans=None,
         device=device,
+        name="modelHMM"
     )
-
+    
+    """
     torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(                                                                                                                                                                                   
         obvs, n_epochs=1_000                                                                                                                                                                                                                                 
     )                                                                                                                                                                                                                                                        
@@ -644,12 +676,11 @@ if __name__ == "__main__":
     logger.info(                                                                                                                                                                                                                                             
         f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."                                                                                                              
     )
-    
     """
+
     log_like = modelHMM.log_like(obvs, hidden_states)
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
-    
 
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = modelHMM.viterbi(obvs, traced=True)
@@ -657,25 +688,26 @@ if __name__ == "__main__":
     logger.info(
         f"Found a joint probability P(x, pi)={log_joint_prob:.4f} with trace:\n{trace_table}"
     )
-    
+
     # NB Most probable state sequence
     viterbi_decoded_states = modelHMM.viterbi_traceback(trace_table, penultimate_state)
 
     logger.info(
         f"Found the penultimate state to be {penultimate_state} with a Viterbi decoding of:\n{viterbi_decoded_states}"
     )
-    
+
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
-    log_evidence_forward_scan = hmm.log_forward_scan(obvs)
-    log_evidence_backward_scan = hmm.log_backward_scan(obvs)
+    log_evidence_forward_scan = modelHMM.log_forward_scan(obvs)
+    log_evidence_backward_scan = modelHMM.log_backward_scan(obvs)
 
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
-    log_evidence_forward, log_forward_array = hmm.log_forward(obvs)
-    log_evidence_backward, log_backward_array = hmm.log_backward(obvs)
+    log_evidence_forward, log_forward_array = modelHMM.log_forward(obvs)
+    log_evidence_backward, log_backward_array = modelHMM.log_backward(obvs)
 
     logger.info(
         f"Found the evidence to be {log_evidence_forward:.4f} by the forward method."
     )
+
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
     )
@@ -687,39 +719,39 @@ if __name__ == "__main__":
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
 
     # NB P(pi_i = k | x) for all i.
-    log_state_posteriors = hmm.log_state_posterior(obvs)
+    log_state_posteriors = modelHMM.log_state_posterior(obvs)
 
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
 
     # NB argmax_k P(pi_i = k | x) for all i.
-    decoded_states = hmm.max_posterior_decoding(obvs)
+    decoded_states = modelHMM.max_posterior_decoding(obvs)
 
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
 
     # NB satisfying!
     assert torch.allclose(hidden_states, decoded_states)
 
-    log_transition_posteriors = hmm.log_transition_posterior(obvs)
+    log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
 
     logger.info(
         f"Found the log transition posteriors to be:\n{log_transition_posteriors}"
     )
 
-    exp_transition_counts = hmm.exp_transition_counts(obvs)
+    exp_transition_counts = modelHMM.exp_transition_counts(obvs)
 
     logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}")
 
     # NB specific to Categorical emission
-    exp_emission_counts = hmm.exp_emission_counts(obvs)
+    exp_emission_counts = modelHMM.exp_emission_counts(obvs)
 
     logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")
 
-    baum_welch_transitions, baum_welch_emissions = hmm.baum_welch_update(obvs)
+    baum_welch_transitions, baum_welch_emissions = modelHMM.baum_welch_update(obvs)
 
     logger.info(
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    """
+
     logger.info(f"Done.\n\n")
