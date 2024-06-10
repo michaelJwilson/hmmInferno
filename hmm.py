@@ -62,7 +62,6 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
-
         log_em.data = CategoricalEmission.normalize_emissions(
             log_em.data, log_probs_precision=log_probs_precision
         )
@@ -80,10 +79,6 @@ class CategoricalEmission(torch.nn.Module):
 
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         return log_em.log_softmax(dim=1)
-
-    def forward(self):
-        # TODO softmax.
-        raise NotImplementedError()
         
     def emission(self, state, obs):
         if state is None:
@@ -92,7 +87,10 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, :]
         else:
             return self.log_em[state, obs]
-
+        
+    def forward(self, obs):
+        return self.log_em[:, obs].log_softmax(dim=0)
+        
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
