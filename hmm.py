@@ -26,7 +26,6 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
-
     def __init__(self, n_states, n_obvs, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -110,8 +109,7 @@ class CategoricalEmission(torch.nn.Module):
         """
         Dict with named torch parameters.
         """
-        return {"log_em": self.log_em}
-
+        return {"log_em": CategoricalEmission.normalize_emissions(self.log_em.clone())}
 
 class NegativeBinomial:
     """
@@ -153,13 +151,13 @@ class NegativeBinomial:
     def log_emission(self, state, obs):
         raise NotImplementedError()
 
-
 class MarkovTransition(torch.nn.Module):
     def __init__(
         self,
         n_states,
         log_trans=None,
         device=None,
+        diag_rate=0.95,
         log_probs_precision=-99.0,
     ):
         super(MarkovTransition, self).__init__()
@@ -173,7 +171,7 @@ class MarkovTransition(torch.nn.Module):
 
         if log_trans is None:
             self.log_trans = MarkovTransition.init_diag_transitions(
-                self.n_states, device=self.device
+                self.n_states, diag_rate=diag_rate, device=self.device
             )
         else:
             assert isinstance(
@@ -286,17 +284,14 @@ class MarkovTransition(torch.nn.Module):
     @property
     def parameters_dict(self):
         """Dict with named torch parameters."""
-        # TODO name clash.
-        # TODO HACK dropeed emission
-        return {"log_trans": self.log_trans}  ## | self.emission_model.parameters_dict
-
+        return {"log_trans": MarkovTransition.normalize_transitions(self.log_trans.clone())}
 
 class HMM(torch.nn.Module):
     def __init__(
         self,
         n_states,
         emission_model,
-        log_trans=None,
+        transition_model,
         device=None,
         log_probs_precision=-99.0,
         name="HMM",
@@ -325,6 +320,9 @@ class HMM(torch.nn.Module):
             self.n_states, requires_grad=False, device=self.device
         )
         self.log_pi[0] = 0.0
+
+        if transition_model is None:
+            transition_model = MarkovTransition(n_states)
 
         self.transition_model = transition_model
         self.emission_model = emission_model
@@ -739,7 +737,7 @@ if __name__ == "__main__":
     # TODO BUG? must be even?
     n_seq, device = 20, "cpu"
 
-    transition_model = MarkovTransition(n_states=4)
+    transition_model = MarkovTransition(n_states=4, diag_rate=0.5)
     transition_model.validate()
 
     # casino = Casino(device=device)
@@ -747,18 +745,18 @@ if __name__ == "__main__":
 
     emission_model = categorical
     emission_model.validate()
-
+    """
     # with torch.no_grad():
     # NB initialise with diagonial transitions matrix.
     log_trans = MarkovTransition.init_diag_transitions(
         emission_model.n_states, device=device, diag_rate=0.5
     )
-
+    """
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=emission_model.n_states - 1,
         emission_model=emission_model,
-        log_trans=log_trans,
+        transition_model=transition_model,
         device=device,
         name="genHMM",
     )
@@ -774,7 +772,7 @@ if __name__ == "__main__":
     modelHMM = HMM(
         n_states=emission_model.n_states - 1,
         emission_model=emission_model,
-        log_trans=None,
+        transition_model=None,
         device=device,
         name="modelHMM",
     )
