@@ -44,27 +44,36 @@ class CategoricalEmission(torch.nn.Module):
 
         self.log_em = self.init_emission()
 
-    def init_emission(self, log_probs_precision=-99.0):
-        # TODO HACK
-        # log_em = torch.randn(self.n_states, self.n_obvs)
-        log_em = (
-            torch.eye(self.n_states, self.n_obvs)
-            .log()
-            .clip(min=log_probs_precision, max=-log_probs_precision)
-        )
+    def init_emission(self, log_probs_precision=-99.0, diag=False):
+        # NB simple Markov model, where the hidden state is emitted.
+        if diag:
+            log_em = (
+                torch.eye(self.n_states, self.n_obvs)
+                .log()
+                .clip(min=log_probs_precision, max=-log_probs_precision)
+            )
+
+        else:
+            log_em = torch.randn(self.n_states, self.n_obvs)
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
-
-        # TODO HACK
-        # NB emit a bookend token from the bookend state.
-        log_em.data[0, :] = log_probs_precision
-        log_em.data[0, 0] = 0.0
-
-        # NB rows sums to zero, as prob. to emit to any obs. is unity.
-        log_em.data = log_em.data.log_softmax(dim=1)
+        log_em.data = CategoricalEmission.normalize_emissions(
+            log_em.data, log_probs_precision=log_probs_precision
+        )
 
         return log_em
+
+    @classmethod
+    def normalize_emissions(cls, log_em, log_probs_precision=-99.0):
+        # NB emit a bookend token from the bookend state.
+        log_em[0, :] = log_probs_precision
+        log_em[0, 0] = 0.0
+
+        log_em[1:, 0] = log_probs_precision
+        
+        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html        
+        return log_em.log_softmax(dim=1)
 
     def emission(self, state, obs):
         if state is None:
@@ -642,6 +651,7 @@ if __name__ == "__main__":
     emission_model = categorical
     emission_model.validate()
 
+    """
     # NB initialise with diagonial transitions matrix.
     log_trans = HMM.init_transitions(
         emission_model.n_states, device=device, diag_rate=0.5
@@ -672,7 +682,6 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
-    """
     torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(                                                                                                                                                                                   
         obvs, n_epochs=1_000                                                                                                                                                                                                                                 
     )                                                                                                                                                                                                                                                        
@@ -680,7 +689,6 @@ if __name__ == "__main__":
     logger.info(                                                                                                                                                                                                                                             
         f"After training with torch for {torch_n_epochs}, found the log evidence to be {torch_log_evidence_forward:.4f} by the forward method."                                                                                                              
     )
-    """
 
     log_like = modelHMM.log_like(obvs, hidden_states)
 
@@ -757,5 +765,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done.\n\n")
