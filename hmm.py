@@ -140,7 +140,7 @@ class HMM(torch.nn.Module):
         log_trans=None,
         device=None,
         log_probs_precision=-99.0,
-        name="HMM"
+        name="HMM",
     ):
         super(HMM, self).__init__()
 
@@ -209,6 +209,10 @@ class HMM(torch.nn.Module):
 
         # NB (nstates - 2) to account for diagonal and bookend.
         off_diag_rate = (1.0 - diag_rate) / (n_states - 2.0)
+
+        logger.info(
+            f"Initialising transition matrix with (diag_rate, off_diag_rate) = ({diag_rate:.4f}, {off_diag_rate:.4f})"
+        )
 
         eye = torch.eye(n_states, device=device)
 
@@ -649,7 +653,7 @@ if __name__ == "__main__":
         emission_model=emission_model,
         log_trans=log_trans,
         device=device,
-        name="genHMM"
+        name="genHMM",
     )
 
     # NB hidden states matched to observed time steps.
@@ -665,9 +669,9 @@ if __name__ == "__main__":
         emission_model=emission_model,
         log_trans=None,
         device=device,
-        name="modelHMM"
+        name="modelHMM",
     )
-    
+
     """
     torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(                                                                                                                                                                                   
         obvs, n_epochs=1_000                                                                                                                                                                                                                                 
@@ -727,7 +731,7 @@ if __name__ == "__main__":
     decoded_states = modelHMM.max_posterior_decoding(obvs)
 
     logger.info(f"Found a state decoding (max. disjoint posterior):\n{decoded_states}")
-
+    """
     # NB satisfying!
     assert torch.allclose(hidden_states, decoded_states)
 
@@ -753,5 +757,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done.\n\n")
