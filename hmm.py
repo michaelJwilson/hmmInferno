@@ -1,4 +1,4 @@
-Aimport logging
+import logging
 import logging.config
 import sys
 import time
@@ -10,15 +10,18 @@ from torch.optim import Adam
 
 from casino import Casino
 from utils import bookend_sequence, get_device
+from rich.logging import RichHandler
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-handler = logging.StreamHandler(sys.stdout)
+# handler = logging.StreamHandler(sys.stdout)
+
+handler = RichHandler(rich_tracebacks=True)
 formatter = logging.Formatter(
     "%(asctime)s - %(process)d - %(levelname)s - %(name)s - %(message)s"
 )
-handler.setFormatter(formatter)
+# handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
@@ -755,7 +758,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_seq, device = 2_000, "cpu"
+    n_seq, device = 200, "cpu"
 
     start = time.time()
     
@@ -799,7 +802,7 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
-    # torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
+    torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
 
     log_like = modelHMM.log_like(obvs, hidden_states)
 
@@ -838,7 +841,7 @@ if __name__ == "__main__":
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
 
-    assert torch.allclose(log_evidence_forward, log_evidence_backward)
+    assert torch.allclose(log_evidence_forward, log_evidence_backward), f"Inconsistent log evidence by forward and backward methods: {log_evidence_forward:.4f} and {log_evidence_backward:.4f}"
 
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
