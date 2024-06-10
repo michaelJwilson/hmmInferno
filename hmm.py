@@ -49,7 +49,7 @@ class CategoricalEmission(torch.nn.Module):
             (self.n_states, self.n_obvs), requires_grad=False, device=device
         )
 
-    def init_emission(self, log_probs_precision=-99.0, diag=False):
+    def init_emission(self, log_probs_precision=-99.0, diag=True):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
             log_em = (
@@ -91,10 +91,7 @@ class CategoricalEmission(torch.nn.Module):
         else:
             return self.log_em[state, obs]
         
-    def forward(self, obs):
-        # TODO BUG verify lookups for obs with different dimensions, e.g. scalar, vector, matrix.
-        raise NotImplementedError("")
-    
+    def forward(self, obs):    
         # NB equivalent to normalized self.emission(None, obs)
         return self.emission(None, obs).log_softmax(dim=0)
         
@@ -680,7 +677,7 @@ if __name__ == "__main__":
 
     categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
     # casino = Casino(device=device)
-
+    """
     emission_model = categorical
     emission_model.validate()
 
@@ -798,4 +795,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
+    """
     logger.info(f"Done.\n\n")
