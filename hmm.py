@@ -24,7 +24,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 
-LOG_PROBS_PRECISION=-99.0
+LOG_PROBS_PRECISION = -99.0
+
 
 class CategoricalEmission(torch.nn.Module):
     """
@@ -223,10 +224,14 @@ class MarkovTransition(torch.nn.Module):
             return self.log_trans[state, :]
         else:
             return self.log_trans[state, second_state]
-            
+
     @classmethod
     def init_diag_transitions(
-        cls, n_states, diag_rate=0.95, device=None, log_probs_precision=LOG_PROBS_PRECISION
+        cls,
+        n_states,
+        diag_rate=0.95,
+        device=None,
+        log_probs_precision=LOG_PROBS_PRECISION,
     ):
         """
         Defaults to a diagonal transition matrix.
@@ -297,9 +302,7 @@ class MarkovTransition(torch.nn.Module):
     @property
     def parameters_dict(self):
         """Dict with named torch parameters."""
-        return {
-            "log_trans": self.log_trans
-        }
+        return {"log_trans": self.log_trans}
 
 
 class HMM(torch.nn.Module):
@@ -482,7 +485,7 @@ class HMM(torch.nn.Module):
         See termination step after Eqn. (3.11) of Durbin.
         """
         assert obvs[0] == obvs[-1] == 0
-        
+
         log_fs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:-1]):
@@ -496,37 +499,37 @@ class HMM(torch.nn.Module):
 
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
-        
+
         return torch.logsumexp(log_fs, dim=0)
 
     def log_forward(self, obvs):
-        """                                                                                                                                                                                                                                                                                               
-        Log evidence (marginalised over latent) by the forward method,                                                                                                                                                                                                                                     
-        returning forward array.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
-        See termination step after Eqn. (3.11) of Durbin.                                                                                                                                                                                                                                                  
         """
-        # NB we must start in a bookend state with a bookend obs.                                                                                                                                                                                                                                          
+        Log evidence (marginalised over latent) by the forward method,
+        returning forward array.
+        See termination step after Eqn. (3.11) of Durbin.
+        """
+        # NB we must start in a bookend state with a bookend obs.
         assert obvs[0] == obvs[-1] == 0
-        
+
         log_fs = torch.zeros(len(obvs), self.n_states, device=self.device)
         log_fs[0] = self.log_pi.clone()
 
         for ii, obv in enumerate(obvs[1:-1]):
-            # DEPRECATE                                                                                                                                                                                                                                                                                    
-            # interim = log_fs[ii].clone().unsqueeze(-1) + self.log_transition(None, None).clone()                                                                                                                                                                                                         
+            # DEPRECATE
+            # interim = log_fs[ii].clone().unsqueeze(-1) + self.log_transition(None, None).clone()
             interim = self.transition_model.forward(log_fs[ii])
 
             # DEPRECATE
             # log_fs[ii + 1]  = self.log_emission(None, obv)
             log_fs[ii + 1] = self.emission_model.forward(obv)
-            
+
             log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
 
-        # NB final transition into the book end state.                                                                                                                                                                                                                                                     
+        # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_transition(None, 0)
 
         return torch.logsumexp(log_fs[-1], dim=0), log_fs
-    
+
     @no_grad
     def log_backward_scan(self, obvs):
         """
@@ -535,21 +538,21 @@ class HMM(torch.nn.Module):
         See termination step before Eqn. (3.14) of Durbin.
         """
         assert obvs[0] == obvs[-1] == 0
-        
+
         rev_obvs = torch.flip(obvs, dims=[0])
         log_bs = self.log_transition(None, 0).clone()
 
         # NB no bookend states.
         for ii, obv in enumerate(rev_obvs[1:-1]):
             interim = log_bs.unsqueeze(0) + self.log_transition(None, None)
-            
+
             # DEPRECATE
             # interim += self.log_emission(None, obv).unsqueeze(0)
             interim += self.emission_model.forward(obv).unsqueeze(0)
 
             log_bs = torch.logsumexp(interim, dim=1)
 
-        log_bs += self.log_transition(0, None) + self.log_emission(None, rev_obvs[-2])             
+        log_bs += self.log_transition(0, None) + self.log_emission(None, rev_obvs[-2])
         log_evidence = torch.logsumexp(log_bs, dim=0)
 
         return log_evidence
@@ -565,7 +568,7 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
 
         rev_obvs = torch.flip(obvs, dims=[0])
-        
+
         log_bs = torch.zeros(len(obvs), self.n_states, device=self.device)
         log_bs[0] = self.log_transition(None, 0).clone()
 
@@ -575,24 +578,30 @@ class HMM(torch.nn.Module):
             # DEPRECATE
             # interim += self.log_emission(None, obv).unsqueeze(0)
             interim += self.emission_model.forward(obv).unsqueeze(0)
-            
-            log_bs[(ii + 1)] = torch.logsumexp(interim, dim=1)
 
-        log_bs[-1] = log_bs[-2] + self.log_transition(0, None) + self.log_emission(None, rev_obvs[-2])
+            log_bs[ii + 1] = torch.logsumexp(interim, dim=1)
+
+        log_bs[-1] = (
+            log_bs[-2]
+            + self.log_transition(0, None)
+            + self.log_emission(None, rev_obvs[-2])
+        )
         log_evidence = torch.logsumexp(log_bs[-1], dim=0)
-        
+
         return log_evidence, torch.flip(log_bs, dims=[0])
 
     def log_state_posterior(self, obvs):
         """
         Eqn. (3.14) of Durbin.
         """
+        assert obvs[0] == obvs[-1] == 0
+
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         _, log_backward_array = self.log_backward(obvs)
 
         # TODO double check indexing
         log_state_posterior = (
-            log_forward_array[1:-1] + log_backward_array[:-1] - log_evidence_forward
+            log_forward_array[1:-1] + log_backward_array[1:-1] - log_evidence_forward
         )
 
         return log_state_posterior
@@ -601,12 +610,16 @@ class HMM(torch.nn.Module):
         """
         Eqn. (3.15) of Durbin.
         """
+        assert obvs[0] == obvs[-1] == 0
+
         return torch.argmax(self.log_state_posterior(obvs), dim=1).to(torch.int32)
 
     def log_transition_posterior(self, obvs):
         """
         Eqn. (3.19) of Durbin.
         """
+        assert obvs[0] == obvs[-1] == 0
+
         # NB we need x_(i+1)
         obvs = torch.roll(obvs.clone(), shifts=-1)
         log_ems = self.log_emission(None, obvs).T.unsqueeze(2)
@@ -721,9 +734,13 @@ class HMM(torch.nn.Module):
         self.eval()
 
         # TODO categorical specific - move to emission?
-        self.emission_model.log_em.data = CategoricalEmission.normalize_emission(self.emission_model.log_em.data)
-        self.transition_model.log_trans.data = MarkovTransition.normalize_transitions(self.transition_model.log_trans.data)
-        
+        self.emission_model.log_em.data = CategoricalEmission.normalize_emission(
+            self.emission_model.log_em.data
+        )
+        self.transition_model.log_trans.data = MarkovTransition.normalize_transitions(
+            self.transition_model.log_trans.data
+        )
+
         for key in self.parameters_dict:
             logger.info(
                 f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
@@ -846,31 +863,33 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f}, {log_evidence_backward_scan:.4f} by the backward method and scan."
     )
-    
+
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
 
-    print(log_backward_array)
-    
-    """
     # TODO tolerance
     assert torch.allclose(
-        log_evidence_forward_scan, log_evidence_backward_scan, atol=1.e-1,
+        log_evidence_forward_scan,
+        log_evidence_backward_scan,
+        atol=1.0e-1,
     ), f"Inconsistent log evidence by forward and backward scan: {log_evidence_forward_scan:.4f} and {log_evidence_backward_scan:.4f}"
-    
+
+    # TODO tolerance
     assert torch.allclose(
-        log_evidence_forward, log_evidence_backward
+        log_evidence_forward,
+        log_evidence_backward,
+        atol=1.0e-1,
     ), f"Inconsistent log evidence by forward and backward methods: {log_evidence_forward:.4f} and {log_evidence_backward:.4f}"
 
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
-
+    """
     # NB P(pi_i = k | x) for all i.
     log_state_posteriors = modelHMM.log_state_posterior(obvs)
 
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
-
+    
     # NB argmax_k P(pi_i = k | x) for all i.
     decoded_states = modelHMM.max_posterior_decoding(obvs)
 
