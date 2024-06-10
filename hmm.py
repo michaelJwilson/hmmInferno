@@ -42,23 +42,28 @@ class CategoricalEmission(torch.nn.Module):
             f"Creating CategoricalEmission with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
         )
 
-        # TODO HACK
-        # self.log_em = torch.randn(self.n_states, self.n_obvs)
-        self.log_em = (
+        self.log_em = self.init_emission()
+
+    def init_emission(self):
+        # TODO HACK                                                                                                                                                                                                          
+        # log_em = torch.randn(self.n_states, self.n_obvs)                                                                                                                                                              
+        log_em = (
             torch.eye(self.n_states, self.n_obvs).log().clip(min=-99.0, max=99.0)
         )
 
-        # NB nn.Parameter marks this to be optimised via torch.
-        self.log_em = torch.nn.Parameter(self.log_em)
+        # NB nn.Parameter marks this to be optimised via torch.                                                                                                                                                              
+        log_em = torch.nn.Parameter(log_em)
 
-        # TODO HACK
-        # NB emit a bookend token from the bookend state.
-        self.log_em.data[0, :] = -99.0
-        self.log_em.data[0, 0] = 0.0
+        # TODO HACK                                                                                                                                                                                                          
+        # NB emit a bookend token from the bookend state.                                                                                                                                                                   
+        log_em.data[0, :] = -99.0
+        log_em.data[0, 0] = 0.0
 
-        # NB rows sums to zero, as prob. to emit to any obs. is unity.
-        self.log_em.data = self.log_em.data.log_softmax(dim=1)
+        # NB rows sums to zero, as prob. to emit to any obs. is unity.                                                                                                                                                       
+        log_em.data = log_em.data.log_softmax(dim=1)
 
+        return log_em
+                
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
