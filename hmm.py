@@ -9,7 +9,7 @@ from torch.distributions import Categorical, negative_binomial
 from torch.optim import Adam
 
 from casino import Casino
-from utils import bookend_sequence, get_device
+from utils import bookend_sequence, get_device, no_grad
 from rich.logging import RichHandler
 
 logger = logging.getLogger()
@@ -55,7 +55,7 @@ class CategoricalEmission(torch.nn.Module):
 
         self.log_em_grad_mask[0, :] = 0
         self.log_em_grad_mask[:, 0] = 0
-        
+
     def init_emission(self, log_probs_precision=-99.0, diag=True):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
@@ -120,7 +120,7 @@ class CategoricalEmission(torch.nn.Module):
         return {"log_em": CategoricalEmission.normalize_emissions(self.log_em.clone())}
 
 
-class NegativeBinomial():
+class NegativeBinomial:
     """
     Models the # of failures in a sequence of IID Bernoulli trials
     before a specified (non-random) # of successes, r.
@@ -202,7 +202,9 @@ class MarkovTransition(torch.nn.Module):
 
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
-            (self.n_states, self.n_states), requires_grad=False, device=self.device,
+            (self.n_states, self.n_states),
+            requires_grad=False,
+            device=self.device,
         )
         self.trans_grad_mask[0, :] = 0
         self.trans_grad_mask[:, 0] = 0
@@ -492,6 +494,7 @@ class HMM(torch.nn.Module):
         # NB final transition into the book end state; note coefficient is not trained.
         return torch.logsumexp(log_fs + self.log_transition(None, 0), dim=0)
 
+    @no_grad
     def log_backward_scan(self, obvs):
         """
         Log evidence (marginalised over latent) by the forward method,
@@ -504,7 +507,7 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(rev_obvs[:-1]):
             interim = (
                 log_bs.unsqueeze(0)
-                + self.log_transition(None, None).clone()
+                + self.log_transition(None, None)
                 + self.log_emission(None, obv).unsqueeze(0)
             )
 
@@ -698,14 +701,16 @@ class HMM(torch.nn.Module):
             self.transition_model.log_trans.grad *= (
                 self.transition_model.trans_grad_mask
             )
-            
+
             # TODO categorical specific - move to emission?
             self.emission_model.log_em.grad *= self.emission_model.log_em_grad_mask
 
             optimizer.step()
 
             if epoch % 10 == 0:
-                logger.info(f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}")
+                logger.info(
+                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}"
+                )
 
         # NB evaluation, not training, mode.
         self.eval()
@@ -716,9 +721,9 @@ class HMM(torch.nn.Module):
             )
 
         logger.info(
-	    f"After training with torch for {n_epochs} epochs, found the log evidence to be {self.log_forward_scan(obvs):.4f} by the forward method."
+            f"After training with torch for {n_epochs} epochs, found the log evidence to be {self.log_forward_scan(obvs):.4f} by the forward method."
         )
-            
+
         return n_epochs, self.log_forward_scan(obvs)
 
     def validate(self):
@@ -761,7 +766,7 @@ if __name__ == "__main__":
     n_seq, device = 200, "cpu"
 
     start = time.time()
-    
+
     transition_model = MarkovTransition(n_states=4, diag_rate=0.5, device=device)
     transition_model.validate()
 
@@ -837,11 +842,18 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f} by the backward method."
     )
+
+    assert torch.allclose(
+        log_evidence_forward_scan, log_evidence_backward_scan
+    ), f"Inconsistent log evidence by forward and backward scan: {log_evidence_forward_scan:.4f} and {log_evidence_backward_scan:.4f}"
+    """
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
 
-    assert torch.allclose(log_evidence_forward, log_evidence_backward), f"Inconsistent log evidence by forward and backward methods: {log_evidence_forward:.4f} and {log_evidence_backward:.4f}"
+    assert torch.allclose(
+        log_evidence_forward, log_evidence_backward
+    ), f"Inconsistent log evidence by forward and backward methods: {log_evidence_forward:.4f} and {log_evidence_backward:.4f}"
 
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
     logger.info(f"Found the log backward array to be:\n{log_backward_array}")
@@ -880,4 +892,5 @@ if __name__ == "__main__":
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
+    """
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

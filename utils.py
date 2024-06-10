@@ -23,3 +23,9 @@ def bookend_sequence(sequence, device=None):
         ),
         dim=0,
     )
+
+def no_grad(func):
+    def wrapper(*args, **kwargs):
+        with torch.no_grad():
+            return func(*args, **kwargs)
+    return wrapper
