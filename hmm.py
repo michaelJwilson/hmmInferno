@@ -89,6 +89,7 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, obs]
         
     def forward(self, obs):
+        # NB equivalent to normalized self.emission(None, obs)
         return self.log_em[:, obs].log_softmax(dim=0)
         
     def validate(self):
