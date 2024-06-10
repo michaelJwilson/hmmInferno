@@ -81,6 +81,10 @@ class CategoricalEmission(torch.nn.Module):
         # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
         return log_em.log_softmax(dim=1)
 
+    def forward(self):
+        # TODO softmax.
+        raise NotImplementedError()
+        
     def emission(self, state, obs):
         if state is None:
             return self.log_em[:, obs]
@@ -579,6 +583,10 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
+    def forward(self, obvs):
+        # TODO softmax
+        raise NotImplementedError()
+    
     def torch_training(self, obvs, optimizer=None, n_epochs=1_000, lr=1.0e-2):
         optimizer = Adam(self.parameters(), lr=lr)
 
