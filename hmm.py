@@ -576,7 +576,9 @@ class HMM(torch.nn.Module):
 
         # TODO
         for ii, obv in enumerate(torch.unique(obvs)):
-            mask = obvs == obv
+            mask = (obvs == obv)
+
+            # TODO if mask.any()
             exp_emission_counts[:, ii] = torch.logsumexp(interim[mask], dim=0).exp()
 
         return exp_emission_counts
