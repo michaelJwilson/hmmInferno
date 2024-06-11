@@ -5,11 +5,17 @@ import time
 
 import numpy as np
 import torch
-from torch.distributions import Categorical, negative_binomial
+from torch.distributions import Categorical
 from torch.optim import Adam
-
-from casino import Casino
-from utils import bookend_sequence, get_device, no_grad
+from transition import MarkovTransition
+from emission import CategoricalEmission
+from utils import (
+    bookend_sequence,
+    get_device,
+    no_grad,
+    get_log_probs_precision,
+    get_log_probs_precision,
+)
 from rich.logging import RichHandler
 
 formatter = logging.Formatter(
@@ -24,145 +30,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 
-LOG_PROBS_PRECISION = -99.0
-
-
-class CategoricalEmission(torch.nn.Module):
-    """
-    Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
-    to n_obvs emission classes.
-    """
-
-    def __init__(self, n_states, n_obvs, diag=False, device=None):
-        super(CategoricalEmission, self).__init__()
-
-        self.device = get_device() if device is None else device
-
-        # NB we assume a bookend state to transition in/out.
-        self.n_states = 1 + n_states
-
-        # NB number of possible observable classes + hidden observation emitted by bookend state.
-        self.n_obvs = 1 + n_obvs
-
-        logger.info(
-            f"Creating CategoricalEmission (diag={diag}) with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
-        )
-
-        self.log_em = self.init_emission(diag=diag)
-
-        # NB emissions to/from bookend state should not be trained.
-        self.log_em_grad_mask = torch.ones(
-            (self.n_states, self.n_obvs), requires_grad=False, device=self.device
-        )
-
-        self.log_em_grad_mask[0, :] = 0
-        self.log_em_grad_mask[:, 0] = 0
-
-    def init_emission(self, log_probs_precision=LOG_PROBS_PRECISION, diag=False):
-        # NB simple Markov model, where the hidden state is emitted.
-        if diag:
-            log_em = (
-                torch.eye(self.n_states, self.n_obvs, device=self.device)
-                .log()
-                .clip(min=log_probs_precision, max=-log_probs_precision)
-            )
-        else:
-            log_em = torch.randn(self.n_states, self.n_obvs, device=self.device)
-
-        # NB nn.Parameter marks this to be optimised via torch.
-        log_em = torch.nn.Parameter(log_em)
-        log_em.data = CategoricalEmission.normalize_emission(
-            log_em.data, log_probs_precision=log_probs_precision
-        )
-
-        return log_em
-
-    @classmethod
-    def normalize_emission(cls, log_em, log_probs_precision=LOG_PROBS_PRECISION):
-        # NB emit only a bookend token from the bookend state.
-        log_em[0, :] = log_probs_precision
-        log_em[0, 0] = 0.0
-
-        # NB only the bookend state emits a bookend token, to machine precision.
-        log_em[1:, 0] = log_probs_precision
-
-        # NB see https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html
-        return log_em.log_softmax(dim=1)
-
-    def log_emission(self, state, obs):
-        """
-        Getter for log_em with broadcasting.
-        """
-        if state is None:
-            return self.log_em[:, obs]
-        elif obs is None:
-            return self.log_em[state, :]
-        else:
-            return self.log_em[state, obs]
-
-    def forward(self, obs):
-        # NB equivalent to normalized self.emission(None, obs) bar bookend row.
-        return self.log_emission(None, obs).log_softmax(dim=0)
-
-    def validate(self):
-        logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
-
-    def to_device(self, device):
-        self.device = device
-        self.log_em = self.log_em.to(device)
-        self.log_em_grad_mask = self.log_em_grad_mask.to(device)
-
-        return self
-
-    @property
-    def parameters_dict(self):
-        """
-        Dict with named torch parameters.
-        """
-        return {"log_em": self.log_em}
-
-
-class NegativeBinomial:
-    """
-    Models the # of failures in a sequence of IID Bernoulli trials
-    before a specified (non-random) # of successes, r.
-
-    total_count (float or Tensor) – non-negative number of negative Bernoulli trials until stop.
-    probs (Tensor) – Event probabilities of success in the half-open interval [0, 1).
-    logits (Tensor) – Event log-odds for probabilities of success, probs = 1 / (1 + exp(-logits)).
-
-    See:
-        https://pytorch.org/docs/stable/distributions.html
-        https://en.wikipedia.org/wiki/Negative_binomial_distribution
-    """
-
-    def __init__(self, total_count, probs):
-        self.dist = negative_binomial.NegativeBinomial(
-            total_count, probs=probs, validate_args=True
-        )
-
-    @property
-    def mean(self):
-        return self.dist.mean
-
-    @property
-    def mode(self):
-        return self.dist.mode
-
-    @property
-    def variance(self):
-        return self.dist.variance
-
-    def log_prob(self, value):
-        return self.dist.log_prob(value)
-
-    def sample(self):
-        return self.dist.sample()
-
-    def log_emission(self, state, obs):
-        raise NotImplementedError()
-
-
+LOG_PROBS_PRECISION = get_log_probs_precision()
 class MarkovTransition(torch.nn.Module):
     def __init__(
         self,
@@ -617,7 +485,7 @@ class HMM(torch.nn.Module):
 
         # NB no bookend states
         log_state_posterior = self.log_state_posterior(obvs)
-        
+
         return torch.argmax(self.log_state_posterior(obvs), dim=1).to(torch.int32)
 
     @no_grad
@@ -632,7 +500,7 @@ class HMM(torch.nn.Module):
 
         # NB we need x_(i+1)
         obvs = obvs.clone()[2:-1]
-        
+
         # NB limit to observed states with i < L; i.e. no transition to bookend.
         log_forward_array = log_forward_array[1:-2].unsqueeze(2)
         log_backward_array = log_backward_array[2:].unsqueeze(1)
@@ -646,11 +514,13 @@ class HMM(torch.nn.Module):
         return log_transition_posterior
 
     @no_grad
-    def exp_transition_counts(self, obvs, log_transition_posterior=None, pseudo_counts=None):
+    def exp_transition_counts(
+        self, obvs, log_transition_posterior=None, pseudo_counts=None
+    ):
         assert obvs[0] == obvs[-1] == 0
 
         if log_transition_posterior is None:
-            # NB only defined for observable states, not bookends.   
+            # NB only defined for observable states, not bookends.
             log_transition_posterior = self.log_transition_posterior(obvs)
 
         exp_transition_counts = torch.logsumexp(log_transition_posterior, dim=0).exp()
@@ -658,7 +528,7 @@ class HMM(torch.nn.Module):
         if pseudo_counts is not None:
             exp_transition_counts += pseudo_counts
 
-        # NB TODO exp. for bookend state transition?            
+        # NB TODO exp. for bookend state transition?
         return exp_transition_counts
 
     def exp_emission_counts(self, obvs, pseudo_counts=None):
@@ -670,9 +540,9 @@ class HMM(torch.nn.Module):
                 (self.n_states, self.n_obvs), device=self.device
             )
         else:
-            # TODO assert shape etc.                                                                                                                                                                                                 
+            # TODO assert shape etc.
             exp_emission_counts = pseduo_counts
-        
+
         # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class?
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         log_backward_evidence, log_backward_array = self.log_backward(obvs)
@@ -685,9 +555,9 @@ class HMM(torch.nn.Module):
         )
 
         interim = log_forward_array + log_backward_array - log_evidence_forward
-        
+
         for obv in torch.unique(obvs):
-            mask = (obvs == obv)
+            mask = obvs == obv
             exp_emission_counts[:, obv] += torch.logsumexp(interim[mask], dim=0).exp()
 
         return exp_emission_counts
@@ -706,11 +576,11 @@ class HMM(torch.nn.Module):
         exp_emission_counts /= torch.sum(exp_emission_counts, dim=1).unsqueeze(-1)
 
         log_trans = exp_transition_counts.log()
-        log_trans[0,:] = self.log_transition(0, None)
-        
+        log_trans[0, :] = self.log_transition(0, None)
+
         log_emit = exp_emission_counts.log()
-        log_emit[0,:] = self.log_emission(0, None)
-        
+        log_emit[0, :] = self.log_emission(0, None)
+
         return log_trans, log_emit
 
     def baum_welch_training(self):
@@ -795,7 +665,6 @@ class HMM(torch.nn.Module):
         # TODO name clash.
         return (
             self.transition_model.parameters_dict | self.emission_model.parameters_dict
-            
         )
 
     def to_device(self, device):
@@ -899,7 +768,7 @@ if __name__ == "__main__":
     assert torch.allclose(
         log_evidence_forward,
         log_evidence_backward,
-        atol=1.,
+        atol=1.0,
     ), f"Inconsistent log evidence by forward and backward methods: {log_evidence_forward:.4f} and {log_evidence_backward:.4f}"
 
     logger.info(f"Found the log forward array to be:\n{log_forward_array}")
@@ -911,7 +780,7 @@ if __name__ == "__main__":
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
 
     assert len(log_state_posteriors) == n_seq
-    
+
     # NB argmax_k P(pi_i = k | x) for all i.
     posterior_decoded_states = modelHMM.max_posterior_decoding(obvs)
     posterior_decoded_states = bookend_sequence(posterior_decoded_states)
@@ -936,19 +805,23 @@ if __name__ == "__main__":
 
     exp_transition_counts = modelHMM.exp_transition_counts(obvs)
 
-    logger.info(f"Found the exp transition counts (no bookends) to be:\n{exp_transition_counts}")
+    logger.info(
+        f"Found the exp transition counts (no bookends) to be:\n{exp_transition_counts}"
+    )
 
     # NB specific to Categorical emission
     exp_emission_counts = modelHMM.exp_emission_counts(obvs)
 
-    logger.info(f"Found the exp emission counts (no bookends) to be:\n{exp_emission_counts}")
+    logger.info(
+        f"Found the exp emission counts (no bookends) to be:\n{exp_emission_counts}"
+    )
 
     baum_welch_transitions, baum_welch_emissions = modelHMM.baum_welch_update(obvs)
 
     logger.info(
         f"Found the transitions Baum-Welch update to be:\n{baum_welch_transitions}"
     )
-    
+
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    
+
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

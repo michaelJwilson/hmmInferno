@@ -29,3 +29,6 @@ def no_grad(func):
         with torch.no_grad():
             return func(*args, **kwargs)
     return wrapper
+
+def get_log_probs_precision():
+    return -99.
