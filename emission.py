@@ -105,7 +105,7 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-    def __init__(self, num_fail, prob_success, device=None):
+    def __init__(self, total_genome_transcipts, baseline_exp, copy_state, eff_read_depth, phi, device=None):
         super(TranscriptEmission, self).__init__()
 
         self.device = get_device() if device is None else device
@@ -113,6 +113,14 @@ class TranscriptEmission(torch.nn.Module):
         logger.info(
             f"Creating TranscriptEmission with total_count={num_fail:.4f} & probs={prob_success:.4f} on device={self.device}"
         )
+        
+        num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
+        prob_success = phi
+
+        exp_trials = torch.round(torch.tensor(num_success / prob_success))
+
+        # TODO CHECK
+        num_fail = exp_trials - num_success
 
         self.dist = NegativeBinomial(num_fail, probs=prob_success)
 
