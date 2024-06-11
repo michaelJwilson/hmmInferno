@@ -46,7 +46,6 @@ if __name__ == "__main__":
     mean_trials = num_fail / fail_prob
     mean_success = mean_trials - num_fail
 
-    # NB 15 failures
     assert torch.allclose(dist.mean, torch.tensor([mean_success]))
     
     print(dist.mean, mean_success)

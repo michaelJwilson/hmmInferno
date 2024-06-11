@@ -105,16 +105,16 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-    def __init__(self, total_count, probs, device=None):
+    def __init__(self, num_fail, prob_success, device=None):
         super(TranscriptEmission, self).__init__()
 
         self.device = get_device() if device is None else device
 
         logger.info(
-            f"Creating TranscriptEmission with total_count={total_count:.4f} & probs={probs:.4f} on device={self.device}"
+            f"Creating TranscriptEmission with total_count={num_fail:.4f} & probs={prob_success:.4f} on device={self.device}"
         )
 
-        self.dist = NegativeBinomial(total_count, probs=probs)
+        self.dist = NegativeBinomial(num_fail, probs=prob_success)
 
     @property
     def mean(self):
@@ -158,11 +158,12 @@ class TranscriptEmission(torch.nn.Module):
         Dict with named torch parameters.
         """
         return {"total_count": self.dist.total_count, "probs": self.dist.probs}
+
     
 if __name__ == "__main__":
-    total_count, probs, device = 10.0, 0.5, "cpu" 
+    num_fail, prob_success, device = 15, 0.25, "cpu" 
+    emitter = TranscriptEmission(num_fail, prob_success, device=device)
 
-    emitter = TranscriptEmission(total_count, probs, device=device)
+    assert torch.allclose(emitter.mean, torch.tensor([5.0]))
 
-    print(emitter)
     print("Done.")
