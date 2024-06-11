@@ -33,7 +33,7 @@ class CategoricalEmission(torch.nn.Module):
     to n_obvs emission classes.
     """
 
-    def __init__(self, n_states, n_obvs, device=None):
+    def __init__(self, n_states, n_obvs, diag=False, device=None):
         super(CategoricalEmission, self).__init__()
 
         self.device = get_device() if device is None else device
@@ -45,10 +45,10 @@ class CategoricalEmission(torch.nn.Module):
         self.n_obvs = 1 + n_obvs
 
         logger.info(
-            f"Creating CategoricalEmission with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
+            f"Creating CategoricalEmission (diag={diag}) with {n_states} hidden states & {n_obvs} observed classes on device={self.device}"
         )
 
-        self.log_em = self.init_emission()
+        self.log_em = self.init_emission(diag=diag)
 
         # NB emissions to/from bookend state should not be trained.
         self.log_em_grad_mask = torch.ones(
@@ -602,20 +602,25 @@ class HMM(torch.nn.Module):
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         _, log_backward_array = self.log_backward(obvs)
 
-        # TODO double check indexing
         log_state_posterior = (
             log_forward_array[1:-1] + log_backward_array[1:] - log_evidence_forward
         )
 
         return log_state_posterior
 
+    @no_grad
     def max_posterior_decoding(self, obvs):
         """
         Eqn. (3.15) of Durbin.
         """
         assert obvs[0] == obvs[-1] == 0
+
+        # NB no bookend states
+        log_state_posterior = self.log_state_posterior(obvs)
+        
         return torch.argmax(self.log_state_posterior(obvs), dim=1).to(torch.int32)
 
+    @no_grad
     def log_transition_posterior(self, obvs):
         """
         Eqn. (3.19) of Durbin.
@@ -623,17 +628,14 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
 
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
-        _, log_backward_array = self.log_backward(obvs)
+        log_evidence_backward, log_backward_array = self.log_backward(obvs)
 
         # NB we need x_(i+1)
         obvs = obvs.clone()[2:-1]
-
+        
         # NB limit to observed states with i < L; i.e. no transition to bookend.
         log_forward_array = log_forward_array[1:-2].unsqueeze(2)
         log_backward_array = log_backward_array[2:].unsqueeze(1)
-
-        # TODO HACK
-        log_backward_array = torch.zeros_like(log_backward_array, device=self.device)
 
         # NB indexed by (i == time, k, l)
         log_transition_posterior = log_forward_array + log_backward_array
@@ -643,25 +645,37 @@ class HMM(torch.nn.Module):
 
         return log_transition_posterior
 
-    def exp_transition_counts(self, obvs, pseudo_counts=None):
+    @no_grad
+    def exp_transition_counts(self, obvs, log_transition_posterior=None, pseudo_counts=None):
         assert obvs[0] == obvs[-1] == 0
 
-        # NB only defined for observable states, not bookends.
-        log_transition_posterior = self.log_transition_posterior(obvs)
+        if log_transition_posterior is None:
+            # NB only defined for observable states, not bookends.   
+            log_transition_posterior = self.log_transition_posterior(obvs)
+
         exp_transition_counts = torch.logsumexp(log_transition_posterior, dim=0).exp()
 
         if pseudo_counts is not None:
             exp_transition_counts += pseudo_counts
 
+        # NB TODO exp. for bookend state transition?            
         return exp_transition_counts
 
     def exp_emission_counts(self, obvs, pseudo_counts=None):
         """ """
         assert obvs[0] == obvs[-1] == 0
 
+        if pseudo_counts is None:
+            exp_emission_counts = torch.zeros(
+                (self.n_states, self.n_obvs), device=self.device
+            )
+        else:
+            # TODO assert shape etc.                                                                                                                                                                                                 
+            exp_emission_counts = pseduo_counts
+        
         # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class?
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
-        _, log_backward_array = self.log_backward(obvs)
+        log_backward_evidence, log_backward_array = self.log_backward(obvs)
 
         # NB no bookend states
         obvs, log_forward_array, log_backward_array = (
@@ -669,21 +683,12 @@ class HMM(torch.nn.Module):
             log_forward_array[1:-1],
             log_backward_array[1:],
         )
-        
+
         interim = log_forward_array + log_backward_array - log_evidence_forward
-
-        if pseudo_counts is None:
-            exp_emission_counts = torch.zeros(
-                (self.n_states, self.n_obvs), device=self.device
-            )
-        else:
-            # TODO assert shape etc.
-            exp_emission_counts = pseduo_counts
-
-        # TODO
-        for ii, obv in enumerate(torch.unique(obvs)):
+        
+        for obv in torch.unique(obvs):
             mask = (obvs == obv)
-            exp_emission_counts[:, ii] += torch.logsumexp(interim[mask], dim=0).exp()
+            exp_emission_counts[:, obv] += torch.logsumexp(interim[mask], dim=0).exp()
 
         return exp_emission_counts
 
@@ -700,12 +705,18 @@ class HMM(torch.nn.Module):
         exp_emission_counts = self.exp_emission_counts(obvs, emission_pseudo_counts)
         exp_emission_counts /= torch.sum(exp_emission_counts, dim=1).unsqueeze(-1)
 
-        return exp_transition_counts, exp_emission_counts
+        log_trans = exp_transition_counts.log()
+        log_trans[0,:] = self.log_transition(0, None)
+        
+        log_emit = exp_emission_counts.log()
+        log_emit[0,:] = self.log_emission(0, None)
+        
+        return log_trans, log_emit
 
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=300, lr=1.0e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=150, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = Adam(self.parameters(), lr=lr)
 
@@ -782,10 +793,10 @@ class HMM(torch.nn.Module):
     def parameters_dict(self):
         """Dict with named torch parameters."""
         # TODO name clash.
-        # TODO HACK dropeed emission
         return (
-            self.transition_model.parameters_dict
-        )  ## | self.emission_model.parameters_dict
+            self.transition_model.parameters_dict | self.emission_model.parameters_dict
+            
+        )
 
     def to_device(self, device):
         self.log_pi = self.log_pi.to(device)
@@ -798,7 +809,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_seq, device, train = 8, "cpu", False
+    n_seq, diag, device, train = 200, True, "cpu", True
 
     start = time.time()
 
@@ -806,7 +817,7 @@ if __name__ == "__main__":
     transition_model.validate()
 
     # casino = Casino(device=device)
-    categorical = CategoricalEmission(n_states=4, n_obvs=4, device=device)
+    categorical = CategoricalEmission(n_states=4, diag=diag, n_obvs=4, device=device)
 
     emission_model = categorical
     emission_model.validate()
@@ -899,6 +910,8 @@ if __name__ == "__main__":
 
     logger.info(f"Found the state posteriors to be:\n{log_state_posteriors}")
 
+    assert len(log_state_posteriors) == n_seq
+    
     # NB argmax_k P(pi_i = k | x) for all i.
     posterior_decoded_states = modelHMM.max_posterior_decoding(obvs)
     posterior_decoded_states = bookend_sequence(posterior_decoded_states)
@@ -907,14 +920,14 @@ if __name__ == "__main__":
         f"Found a state decoding (max. disjoint posterior):\n{posterior_decoded_states}"
     )
 
-    """
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(
         hidden_states, posterior_decoded_states
     ), f"State decoding and truth inconsistent:\n{hidden_states}\n{posterior_decoded_states}."
-    """
+
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
 
+    # NB the last transition is (i, i + 1) == (L - 1, L).
     assert len(log_transition_posteriors) == (n_seq - 1)
 
     logger.info(
@@ -923,12 +936,12 @@ if __name__ == "__main__":
 
     exp_transition_counts = modelHMM.exp_transition_counts(obvs)
 
-    logger.info(f"Found the exp transition counts to be:\n{exp_transition_counts}")
+    logger.info(f"Found the exp transition counts (no bookends) to be:\n{exp_transition_counts}")
 
     # NB specific to Categorical emission
     exp_emission_counts = modelHMM.exp_emission_counts(obvs)
 
-    logger.info(f"Found the exp emission counts to be:\n{exp_emission_counts}")
+    logger.info(f"Found the exp emission counts (no bookends) to be:\n{exp_emission_counts}")
 
     baum_welch_transitions, baum_welch_emissions = modelHMM.baum_welch_update(obvs)
 
@@ -937,5 +950,5 @@ if __name__ == "__main__":
     )
     
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
