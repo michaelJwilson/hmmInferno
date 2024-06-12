@@ -695,7 +695,7 @@ if __name__ == "__main__":
 
     logger.info(f"Generated hidden sequence:\n{hidden_states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-    """
+
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
@@ -704,7 +704,7 @@ if __name__ == "__main__":
         device=device,
         name="modelHMM",
     )
-
+    """
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
 

@@ -14,6 +14,7 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
+
     def __init__(self, n_states, n_obvs, diag=False, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -84,7 +85,7 @@ class CategoricalEmission(torch.nn.Module):
     def sample(self, state):
         probs = self.log_emission(state, None).exp()
         return Categorical(probs).sample()
-        
+
     def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs) bar bookend row.
         return self.log_emission(None, obs).log_softmax(dim=0)
@@ -107,10 +108,25 @@ class CategoricalEmission(torch.nn.Module):
         return {"log_em": self.log_em}
 
 
+class BookendDist:
+    def __init__(self):
+        pass
+
+    def sample(self):
+        return 0
+
+    def log_prob(self, obs):
+        if abs(obs) > 0:
+            return LOG_PROBS_PRECISION
+        else:
+            return 0.0
+
+
 class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
+
     def __init__(
         self,
         n_states,
@@ -136,16 +152,30 @@ class TranscriptEmission(torch.nn.Module):
             total_exp_read_depth=total_exp_read_depth
         )
 
+        self.state_grad_mask = torch.ones(
+            self.n_states, requires_grad=False, device=self.device
+        )
+        self.state_grad_mask[0] = 0.0
+        
         # NB torch parameter updates are propagated through torch dists,
         #    i.e. on parameter update, sample outputs will update, etc.
         self.state_dists = {
-            1 + state: NegativeBinomial(self.state_means[state], 1.0 - self.state_phis[state])
+            1
+            + state: NegativeBinomial(
+                self.state_means[state], 1.0 - self.state_phis[state]
+            )
             for state in range(self.n_states)
         }
 
-    def init_emission(self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION):
+        self.state_dists[0] = BookendDist()
+
+    def init_emission(
+        self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION
+    ):
         # NB generator for normal(0., 1.); state_means == Tn * Lg * mu
-        state_means = total_exp_read_depth * torch.rand(self.n_states, device=self.device)
+        state_means = total_exp_read_depth * torch.rand(
+            self.n_states, device=self.device
+        )
         state_means = torch.nn.Parameter(state_means)
 
         # NB binomial like
@@ -157,12 +187,7 @@ class TranscriptEmission(torch.nn.Module):
     def sample(self, state):
         # TODO efficient? len(state) != 1
         state = get_scalar(state)
-
-        # NB bookend state with certainty
-        if state == 0:
-            return 0
-        else:
-            return self.state_dists[state].sample()
+        return self.state_dists[state].sample()
 
     def forward(self, obs):
         # NB forward is to be used for training only.
@@ -183,27 +208,33 @@ class TranscriptEmission(torch.nn.Module):
         elif obs is None:
             raise NotImplementedError()
         else:
-            if state == 0:
-                if abs(obs) > 0:
-                    return -LOG_PROBS_PRECISION
-                else:
-                    return 1.0
-            
             return self.state_dists[state].log_prob(obs)
 
     def to_device(self, device):
         self.device = device
+        self.baseline_exp = self.baseline_exp.to(device)
+        self.spots_total_transcripts = self.spots_total_transcripts.to(device)
+        self.state_means = self.state_means.to(device)
+        self.state_phis = self.state_phis.to(device)
+        self.state_grad_mask = self.state_grad_mask.to(device)
+
+        # TODO?
+        # self.state_dists = self.state_dists.to(device)
+        
         return self
 
     def validate(self):
-        logger.info(f"Negative Binomial emission with means and overdispersion:\n{self.state_means}\n{self.state_phis}\n")
-    
+        logger.info(
+            f"Negative Binomial emission with means and overdispersion:\n{self.state_means}\n{self.state_phis}\n"
+        )
+
     @property
     def parameters_dict(self):
         """
         Dict with named torch parameters.
         """
-        return None
+
+        return {"state_means": self.state_means, "state_phis": self.state_phis}
 
 
 if __name__ == "__main__":
@@ -217,14 +248,14 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
-    
+
     # TODO set seed for cuda / mps
     torch.manual_seed(314)
 
     # NB K states with N spots, G segments on device.
     K, N, G, device = 8, 100, 25, "cpu"
     total_exp_read_depth = 25
-    
+
     # NB
     spots_total_transcripts = torch.randn(N, device=device)
     baseline_exp = torch.randn(G, device=device)
@@ -233,7 +264,9 @@ if __name__ == "__main__":
         K, spots_total_transcripts, baseline_exp, device=device
     )
 
-    obs = total_exp_read_depth * torch.randint(low=0, high=(total_exp_read_depth + 1), size=(N * G,), device=device)
+    obs = total_exp_read_depth * torch.randint(
+        low=0, high=(total_exp_read_depth + 1), size=(N * G,), device=device
+    )
     result = emitter.log_emission(None, obs)
 
     logger.info(result.shape)
