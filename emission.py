@@ -202,7 +202,7 @@ if __name__ == "__main__":
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-    # handler = RichHandler(rich_tracebacks=True)                                                                                                                                                                                                           
+
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
@@ -212,7 +212,9 @@ if __name__ == "__main__":
 
     # NB K states with N spots, G segments on device.
     K, N, G, device = 8, 100, 25, "cpu"
-
+    total_exp_read_depth = 25
+    
+    
     spots_total_transcripts = torch.randn(N, device=device)
     baseline_exp = torch.randn(G, device=device)
 
@@ -220,7 +222,7 @@ if __name__ == "__main__":
         K, spots_total_transcripts, baseline_exp, device=device
     )
 
-    obs = 25 * torch.randint(low=0, high=26, size=(N * G,), device=device)
+    obs = total_exp_read_depth * torch.randint(low=0, high=(total_exp_read_depth + 1), size=(N * G,), device=device)
     result = emitter.log_emission(None, obs)
 
     logger.info(result.shape)
