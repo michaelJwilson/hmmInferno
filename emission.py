@@ -121,23 +121,30 @@ class TranscriptEmission(torch.nn.Module):
         self.spots_total_transcripts = spots_total_transcripts
 
         logger.warning(f"Assuming a max. read depth of {max_read_depth}.")
-        
-        # NB generator for normal(0., 1.)
-        self.state_mus = max_read_depth * torch.rand(self.n_states, device=self.device)
-        self.state_mus = torch.nn.Parameter(self.state_mus)
 
-        self.state_phis = torch.rand(self.n_states, device=self.device)
-        self.state_phis = torch.nn.Parameter(self.state_phis)
-        
-        # NB torch parameter updates are propagated through torch dists,
-        #    i.e. on parameter update, sample outputs will update, etc.
-        self.state_dists = {
+        self.state_mus, self.state_phis = self.init_emission(max_read_depth=max_read_depth)
+
+        # NB torch parameter updates are propagated through torch dists,                                                                                                                       
+        #    i.e. on parameter update, sample outputs will update, etc.                                                                                                                        
+        state_dists = {
             state: NegativeBinomial(
-                self.state_mus[state], 1.0 - self.state_phis[state]
+                state_mus[state], 1.0 - state_phis[state]
             )
             for state in range(self.n_states)
         }
 
+        return state_mus, state_phis, state_dists
+        
+    def init_emission(self, max_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION):
+        # NB generator for normal(0., 1.)                                                                                                                             
+        state_mus = max_read_depth * torch.rand(self.n_states, device=self.device)
+        state_mus = torch.nn.Parameter(state_mus)
+
+        state_phis = torch.rand(self.n_states, device=self.device)
+        state_phis = torch.nn.Parameter(state_phis)
+
+        return state_mus, state_phis
+        
     def sample(self, state):
         return self.state_dists[state].sample()
 
@@ -180,7 +187,7 @@ class TranscriptEmission(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    # TODO set seed for cuda / mps                                                                                                                                                                                      
+    # TODO set seed for cuda / mps                                                                                                                                                                                     
     torch.manual_seed(314)
 
     # NB K states with N spots, G segments on device.
