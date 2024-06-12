@@ -51,3 +51,19 @@ def get_scalars(scalars):
         raise RuntimeError(
             f"get_scalars() does not support input of type {type(scalar)} and len {len(scalar)}.  Found {scalar}."
         )
+
+def set_scalars(scalars, device=None):
+    if device is None:
+        device = get_device()
+    
+    if isinstance(scalars, int):
+        return torch.tensor([scalars], dtype=torch.int32, device=device)
+    elif isinstance(scalars, torch.Tensor):
+        if scalars.dim() == 0:
+            return scalars.unsqueeze(0)
+        else:
+            return scalars
+    else:
+        raise RuntimeError(f"set_scalars() does not support {type(scalars)} type.")
+
+    

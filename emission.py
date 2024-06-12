@@ -2,7 +2,7 @@ import sys
 import torch
 import logging
 from torch.distributions import Categorical
-from utils import get_device, get_log_probs_precision, get_scalars
+from utils import get_device, get_log_probs_precision, get_scalars, set_scalars
 from dist import NegativeBinomial
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
@@ -81,7 +81,7 @@ class CategoricalEmission(torch.nn.Module):
         elif obs is None:
             return self.log_em[state, :]
         else:
-            return self.log_em[state, obs]
+            return set_scalars(self.log_em[state, obs], device=self.device)
 
     def sample(self, state):
         probs = [self.log_emission(ss, None).exp() for ss in get_scalars(state)]
@@ -125,7 +125,7 @@ class BookendDist:
         self.device = get_device() if device is None else get_device()
         
     def sample(self):
-        return torch.tensor([0], dtype=torch.int32, device=self.device)
+        return set_scalars(0, device=self.device)
 
     def log_prob(self, obs):
         if obs.dim() > 0:
@@ -133,7 +133,7 @@ class BookendDist:
             result[obs > 0] = LOG_PROBS_PRECISION
             return result
         else:
-            return torch.tensor([0], dtype=torch.int32, device=self.device)
+            return set_scalars(0, device=self.device)
 
 class TranscriptEmission(torch.nn.Module):
     """
@@ -174,7 +174,7 @@ class TranscriptEmission(torch.nn.Module):
         self.state_dists = {
             1
             + state: NegativeBinomial(
-                self.state_means[state], 1.0 - self.state_phis[state]
+                self.state_means[state], self.state_phis[state]
             )
             for state in range(self.n_states - 1)
         }

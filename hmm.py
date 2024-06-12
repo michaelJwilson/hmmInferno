@@ -15,6 +15,7 @@ from utils import (
     no_grad,
     get_log_probs_precision,
     get_log_probs_precision,
+    set_scalars
 )
 # from rich.logging import RichHandler
 
@@ -83,6 +84,8 @@ class MarkovTransition(torch.nn.Module):
     def log_transition(self, state, second_state):
         """
         Getter for transition matrix with broadcasting.
+
+        Returns torch.Tensor([..])
         """
         if state is None:
             if second_state is None:
@@ -92,7 +95,7 @@ class MarkovTransition(torch.nn.Module):
         elif second_state is None:
             return self.log_trans[state, :]
         else:
-            return self.log_trans[state, second_state]
+            return set_scalars(self.log_trans[state, second_state], device=self.device)
 
     @classmethod
     def init_diag_transitions(
@@ -217,13 +220,15 @@ class HMM(torch.nn.Module):
         self.validate()
 
     def log_transition(self, state, second_state):
+        # NB should be guranteed to return a torch.Tensor with length > 1
         return self.transition_model.log_transition(state, second_state)
 
     def log_emission(self, state, obs):
+        # NB should be guranteed to return a torch.Tensor with length > 1
         return self.emission_model.log_emission(state, obs)
 
     def sample_hidden(self, n_seq, bookend=False):
-        last_state = torch.tensor([0], device=self.device)
+        last_state = set_scalars(0, device=self.device)
         sequence = [last_state.item()]
 
         # TODO avoid bookend intra? samples.
@@ -560,7 +565,7 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=150, lr=1.0e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=300, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = Adam(self.parameters(), lr=lr)
 
@@ -596,10 +601,12 @@ class HMM(torch.nn.Module):
 
         # NB evaluation, not training, mode.
         self.eval()
-        self.emission_model.finalize_training()
-        self.log_trans.data = MarkovTransition.normalize_transitions(
-            self.log_trans.data
+
+        self.transition_model.log_trans.data = MarkovTransition.normalize_transitions(
+            self.transition_model.log_trans.data
         )
+        
+        self.emission_model.finalize_training()
         
         for key in self.parameters_dict:
             logger.info(
@@ -650,7 +657,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", False
+    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", True
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -664,10 +671,11 @@ if __name__ == "__main__":
 
     # casino = Casino(device=device)
     categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    """
     transcripts = TranscriptEmission(
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
-    
+    """
     emission_model = categorical
     emission_model.validate()
 
@@ -698,7 +706,7 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-        
+    """
     log_like = modelHMM.log_like(obvs, hidden_states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
@@ -732,7 +740,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f}, {log_evidence_backward_scan:.4f} by the backward method and scan."
     )
-    
+
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
@@ -803,5 +811,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """    
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
