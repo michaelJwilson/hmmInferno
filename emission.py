@@ -149,6 +149,17 @@ class TranscriptEmission(torch.nn.Module):
         """
         Getter for log_em with broadcasting
         """
+        if state is None:
+            return 
+        elif obs is None:
+            return 
+        else:
+            return
+
+
+        log_prob
+        
+        
         # num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
         # prob_success = phi
 

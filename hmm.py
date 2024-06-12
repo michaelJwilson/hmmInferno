@@ -307,8 +307,6 @@ class HMM(torch.nn.Module):
         log_vs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:]):
-            # DEPRECATE
-            # interim = log_vs.unsqueeze(-1) + self.log_transition(None, None)
             interim = self.transition_model.forward(log_vs)
 
             log_vs, max_states = torch.max(interim, dim=0)
@@ -358,12 +356,7 @@ class HMM(torch.nn.Module):
         log_fs = self.log_pi.clone()
 
         for ii, obs in enumerate(obvs[1:-1]):
-            # DEPRECATE
-            # interim = log_fs.unsqueeze(-1) + self.log_transition(None,None).clone()
             interim = self.transition_model.forward(log_fs)
-
-            # DEPRECATE
-            # log_fs = self.log_emission(None, obs) + torch.logsumexp(interim, dim=0)
             log_fs = self.emission_model.forward(obs) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state; note coefficient is not trained.
@@ -385,14 +378,9 @@ class HMM(torch.nn.Module):
         log_fs[0] = self.log_pi.clone()
 
         for ii, obv in enumerate(obvs[1:-1]):
-            # DEPRECATE
-            # interim = log_fs[ii].clone().unsqueeze(-1) + self.log_transition(None, None).clone()
             interim = self.transition_model.forward(log_fs[ii])
 
-            # DEPRECATE
-            # log_fs[ii + 1]  = self.log_emission(None, obv)
             log_fs[ii + 1] = self.emission_model.forward(obv)
-
             log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state.
@@ -415,9 +403,6 @@ class HMM(torch.nn.Module):
         # NB no bookend states.
         for ii, obv in enumerate(rev_obvs[1:-2]):
             interim = log_bs.unsqueeze(0) + self.log_transition(None, None)
-
-            # DEPRECATE
-            # interim += self.log_emission(None, obv).unsqueeze(0)
             interim += self.emission_model.forward(obv).unsqueeze(0)
 
             log_bs = torch.logsumexp(interim, dim=1)
@@ -444,9 +429,6 @@ class HMM(torch.nn.Module):
 
         for ii, obv in enumerate(rev_obvs[1:-2]):
             interim = log_bs[ii, :].unsqueeze(0) + self.log_transition(None, None)
-
-            # DEPRECATE
-            # interim += self.log_emission(None, obv).unsqueeze(0)
             interim += self.emission_model.forward(obv).unsqueeze(0)
 
             log_bs[ii + 1] = torch.logsumexp(interim, dim=1)
