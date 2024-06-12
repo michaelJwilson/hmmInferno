@@ -7,6 +7,7 @@ LOG_PROBS_PRECISION = get_log_probs_precision()
 
 logger = logging.getLogger(__name__)
 
+
 class CategoricalEmission(torch.nn.Module):
     """
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
@@ -101,35 +102,50 @@ class CategoricalEmission(torch.nn.Module):
         """
         return {"log_em": self.log_em}
 
+
 class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-    def __init__(self, n_states, spots_total_transcripts, baseline_exp, device=None):
+
+    def __init__(self, n_states, spots_total_transcripts, baseline_exp, max_read_depth=25, device=None):
         super(TranscriptEmission, self).__init__()
 
-        self.n_states =	n_states
+        self.n_states = n_states
         self.device = get_device() if device is None else device
-
-        # NB generator for normal(0., 1.)
-        self.state_log_mus = torch.randn(self.n_states, device=self.device)
-        self.state_log_mus = torch.nn.Parameter(self.state_log_mus)
-
-        self.state_log_phis = torch.randn(self.n_states, device=self.device)
-        self.state_log_phis = torch.nn.Parameter(self.state_log_phis)
 
         # NB baseline exp. per genomic segment, g e (1, .., G).
         self.baseline_exp = baseline_exp
 
-        # NB total genomic transcripts per spot, n e (1, .., N). 
+        # NB total genomic transcripts per spot, n e (1, .., N).
         self.spots_total_transcripts = spots_total_transcripts
-        self.baseline_exp = baseline_exp
 
-    def sample(self):
-        return None
-        # return self.dist.sample()
+        logger.warning(f"Assuming a max. read depth of {max_read_depth}.")
+        
+        # NB generator for normal(0., 1.)
+        self.state_mus = max_read_depth * torch.rand(self.n_states, device=self.device)
+        self.state_mus = torch.nn.Parameter(self.state_mus)
 
-    def log_emission(self, copy_state, obs, total_genome_transcipts, baseline_exp):
+        self.state_phis = torch.rand(self.n_states, device=self.device)
+        self.state_phis = torch.nn.Parameter(self.state_phis)
+        
+        # NB torch parameter updates are propagated through torch dists,
+        #    i.e. on parameter update, sample outputs will update, etc.
+        self.state_dists = {
+            state: NegativeBinomial(
+                self.state_mus[state], 1.0 - self.state_phis[state]
+            )
+            for state in range(self.n_states)
+        }
+
+    def sample(self, state):
+        return self.state_dists[state].sample()
+
+    def forward(self, obs):
+        # NB forward is to be used for training only.
+        raise NotImplementedError()
+
+    def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting
         """
@@ -137,16 +153,10 @@ class TranscriptEmission(torch.nn.Module):
         # prob_success = phi
 
         # exp_trials = torch.round(torch.tensor(num_success / prob_success))
-        
-        # TODO CHECK                                                                                                                                                                                      
+
+        # TODO CHECK
         # num_fail = exp_trials - num_success
-        
-        raise NotImplementedError()
 
-    def forward(self, obs):
-        raise NotImplementedError()
-
-    def validate(self):
         raise NotImplementedError()
 
     def to_device(self, device):
@@ -160,14 +170,19 @@ class TranscriptEmission(torch.nn.Module):
         """
         return None
 
-    
+
 if __name__ == "__main__":
-    Z, N, G, device = 8, 100, 25, "cpu"
+    # TODO set seed for cuda / mps                                                                                                                                                                                      
+    torch.manual_seed(314)
+        
+    K, N, G, device = 8, 100, 25, "cpu"
 
-    spots_total_transcripts = torch.randn(Z, device=device)
-    baseline_exp = torch.randn(Z, device=device)
-    
-    emitter = TranscriptEmission(N, spots_total_transcripts, baseline_exp, device=device)
+    spots_total_transcripts = torch.randn(K, device=device)
+    baseline_exp = torch.randn(K, device=device)
 
-    print(emitter)    
+    emitter = TranscriptEmission(
+        N, spots_total_transcripts, baseline_exp, device=device
+    )
+
+    print(emitter.state_mus[0], emitter.sample(0))
     print("Done.")

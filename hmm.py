@@ -18,6 +18,8 @@ from utils import (
 )
 from rich.logging import RichHandler
 
+LOG_PROBS_PRECISION = get_log_probs_precision()
+
 formatter = logging.Formatter(
     "%(asctime)s - %(process)d - %(levelname)s - %(name)s - %(message)s"
 )
@@ -30,7 +32,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 
-LOG_PROBS_PRECISION = get_log_probs_precision()
 class MarkovTransition(torch.nn.Module):
     def __init__(
         self,
