@@ -176,7 +176,7 @@ class TranscriptEmission(torch.nn.Module):
             + state: NegativeBinomial(
                 self.state_means[state], 1.0 - self.state_phis[state]
             )
-            for state in range(self.n_states)
+            for state in range(self.n_states - 1)
         }
 
         # NB 0 should be first key
@@ -217,7 +217,7 @@ class TranscriptEmission(torch.nn.Module):
     def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting
-        """        
+        """
         if state is None:
             if obs is None:
                 raise NotImplementedError()

@@ -341,11 +341,11 @@ class HMM(torch.nn.Module):
         See termination step after Eqn. (3.11) of Durbin.
         """
         assert obvs[0] == obvs[-1] == 0
-
+        
         log_fs = self.log_pi.clone()
-
+        
         for ii, obs in enumerate(obvs[1:-1]):
-            interim = self.transition_model.forward(log_fs)
+            interim = self.transition_model.forward(log_fs)            
             log_fs = self.emission_model.forward(obs) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state; note coefficient is not trained.
@@ -391,8 +391,10 @@ class HMM(torch.nn.Module):
 
         # NB no bookend states.
         for ii, obv in enumerate(rev_obvs[1:-2]):
+            obv = obv.unsqueeze(0)
+            
             interim = log_bs.unsqueeze(0) + self.log_transition(None, None)
-            interim += self.emission_model.forward(obv).unsqueeze(0)
+            interim += self.emission_model.forward(obv)
 
             log_bs = torch.logsumexp(interim, dim=1)
 
@@ -718,7 +720,7 @@ if __name__ == "__main__":
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward_scan = modelHMM.log_forward_scan(obvs)
     log_evidence_backward_scan = modelHMM.log_backward_scan(obvs)
-
+    """
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = modelHMM.log_forward(obvs)
     log_evidence_backward, log_backward_array = modelHMM.log_backward(obvs)
@@ -730,7 +732,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f}, {log_evidence_backward_scan:.4f} by the backward method and scan."
     )
-    """
+    
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
