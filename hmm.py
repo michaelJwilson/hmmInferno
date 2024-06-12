@@ -681,7 +681,7 @@ if __name__ == "__main__":
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
 
-    emission_model = transcripts
+    emission_model = categorical
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.

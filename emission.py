@@ -88,7 +88,7 @@ class CategoricalEmission(torch.nn.Module):
         result = [Categorical(pp).sample() for pp in probs]        
         return torch.tensor(result, dtype=torch.int32, device=self.device)
 
-    def mask_grad(self):        
+    def mask_grad(self):
         self.log_em.grad *= self.log_em_grad_mask
         return self
     
@@ -187,12 +187,12 @@ class TranscriptEmission(torch.nn.Module):
     ):
         # NB generator for normal(0., 1.); state_means == Tn * Lg * mu
         state_means = total_exp_read_depth * torch.rand(
-            self.n_states, device=self.device
+            self.n_states, device=self.device, requires_grad=True
         )
         state_means = torch.nn.Parameter(state_means)
 
         # NB binomial like
-        state_phis = torch.rand(self.n_states, device=self.device)
+        state_phis = torch.rand(self.n_states, device=self.device, requires_grad=True)
         state_phis = torch.nn.Parameter(state_phis)
 
         return state_means, state_phis
@@ -203,11 +203,6 @@ class TranscriptEmission(torch.nn.Module):
         return torch.tensor(result, dtype=torch.int32, device=self.device)
         
     def mask_grad(self):
-        print(self.state_means.grad)
-        print(self.state_phis.grad)
-        print(self.state_grad_mask)
-        exit(0)
-        
         self.state_means.grad *= self.state_grad_mask
         self.state_phis.grad *= self.state_grad_mask
         return self
