@@ -43,7 +43,7 @@ def get_scalars(scalars):
         yield scalars
     elif isinstance(scalars, torch.Tensor):
         if scalars.dim() == 0:
-            yield scalar.item()
+            yield scalars.item()
         else:
             for ss in scalars:
                 yield ss.item()

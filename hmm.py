@@ -265,15 +265,15 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
 
         # NB we start in the bookend state with unit probability.
-        log_like = self.log_pi[0].clone()
+        log_like = self.log_pi[0].clone().unsqueeze(0)
         last_state = states[0].clone()
-
+        
         for obs, state in zip(obvs[1:-1], states[1:-1]):
             log_like += self.log_transition(last_state, state)
             log_like += self.log_emission(state, obs)
-
+                
             last_state = state
-
+            
         return log_like
 
     def viterbi(self, obvs, traced=False):
@@ -661,12 +661,12 @@ if __name__ == "__main__":
     baseline_exp = torch.randn(n_segments, device=device)
 
     # casino = Casino(device=device)
-    categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
-    # transcripts = TranscriptEmission(
-    #    n_states, spots_total_transcripts, baseline_exp, device=device
-    #)
+    # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    transcripts = TranscriptEmission(
+        n_states, spots_total_transcripts, baseline_exp, device=device
+    )
     
-    emission_model = categorical
+    emission_model = transcripts
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -696,18 +696,18 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-
-    log_like = modelHMM.log_like(obvs, hidden_states)
+        
+    log_like = modelHMM.log_like(obvs, hidden_states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
-    
+
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = modelHMM.viterbi(obvs, traced=True)
 
     logger.info(
         f"Found a joint probability P(x, pi)={log_joint_prob:.4f} with trace:\n{trace_table}"
     )
-
+    """
     # NB Most probable state sequence
     viterbi_decoded_states = modelHMM.viterbi_traceback(trace_table, penultimate_state)
 
@@ -801,5 +801,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
