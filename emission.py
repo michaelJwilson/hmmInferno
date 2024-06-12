@@ -105,47 +105,42 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-    def __init__(self, total_genome_transcipts, baseline_exp, copy_state, eff_read_depth, phi, device=None):
+    def __init__(self, n_states, spots_total_transcripts, baseline_exp, device=None):
         super(TranscriptEmission, self).__init__()
 
+        self.n_states =	n_states
         self.device = get_device() if device is None else device
 
-        logger.info(
-            f"Creating TranscriptEmission with total_count={num_fail:.4f} & probs={prob_success:.4f} on device={self.device}"
-        )
-        
-        num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
-        prob_success = phi
+        # NB generator for normal(0., 1.)
+        self.state_log_mus = torch.randn(self.n_states, device=self.device)
+        self.state_log_mus = torch.nn.Parameter(self.state_log_mus)
 
-        exp_trials = torch.round(torch.tensor(num_success / prob_success))
+        self.state_log_phis = torch.randn(self.n_states, device=self.device)
+        self.state_log_phis = torch.nn.Parameter(self.state_log_phis)
 
-        # TODO CHECK
-        num_fail = exp_trials - num_success
+        # NB baseline exp. per genomic segment, g e (1, .., G).
+        self.baseline_exp = baseline_exp
 
-        self.dist = NegativeBinomial(num_fail, probs=prob_success)
-
-    @property
-    def mean(self):
-        return self.dist.mean
-
-    @property
-    def mode(self):
-        return self.dist.mode
-
-    @property
-    def variance(self):
-        return self.dist.variance
-
-    def log_prob(self, value):
-        return self.dist.log_prob(value)
+        # NB total genomic transcripts per spot, n e (1, .., N). 
+        self.spots_total_transcripts = spots_total_transcripts
+        self.baseline_exp = baseline_exp
 
     def sample(self):
-        return self.dist.sample()
+        return None
+        # return self.dist.sample()
 
-    def log_emission(self, state, obs):
+    def log_emission(self, copy_state, obs, total_genome_transcipts, baseline_exp):
         """
         Getter for log_em with broadcasting
         """
+        # num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
+        # prob_success = phi
+
+        # exp_trials = torch.round(torch.tensor(num_success / prob_success))
+        
+        # TODO CHECK                                                                                                                                                                                      
+        # num_fail = exp_trials - num_success
+        
         raise NotImplementedError()
 
     def forward(self, obs):
@@ -156,8 +151,6 @@ class TranscriptEmission(torch.nn.Module):
 
     def to_device(self, device):
         self.device = device
-        self.dist.to_device(device)
-
         return self
 
     @property
@@ -165,13 +158,16 @@ class TranscriptEmission(torch.nn.Module):
         """
         Dict with named torch parameters.
         """
-        return {"total_count": self.dist.total_count, "probs": self.dist.probs}
+        return None
 
     
 if __name__ == "__main__":
-    num_fail, prob_success, device = 15, 0.25, "cpu" 
-    emitter = TranscriptEmission(num_fail, prob_success, device=device)
+    Z, N, G, device = 8, 100, 25, "cpu"
 
-    assert torch.allclose(emitter.mean, torch.tensor([5.0]))
+    spots_total_transcripts = torch.randn(Z, device=device)
+    baseline_exp = torch.randn(Z, device=device)
+    
+    emitter = TranscriptEmission(N, spots_total_transcripts, baseline_exp, device=device)
 
+    print(emitter)    
     print("Done.")

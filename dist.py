@@ -30,10 +30,6 @@ class NegativeBinomial():
     @property
     def variance(self):
         return self.dist.variance
-
-    @proptery
-    def lambda(self):
-        return self.dist.mean
     
     def log_prob(self, value):
         return self.dist.log_prob(value)
