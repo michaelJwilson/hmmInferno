@@ -45,12 +45,12 @@ class CategoricalEmission(torch.nn.Module):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
             log_em = (
-                torch.eye(self.n_states, self.n_obvs, device=self.device)
+                torch.eye(self.n_states, self.n_obvs, device=self.device, requires_grad=True)
                 .log()
                 .clip(min=log_probs_precision, max=-log_probs_precision)
             )
         else:
-            log_em = torch.randn(self.n_states, self.n_obvs, device=self.device)
+            log_em = torch.randn(self.n_states, self.n_obvs, device=self.device, requires_grad=True)
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
@@ -88,7 +88,7 @@ class CategoricalEmission(torch.nn.Module):
         result = [Categorical(pp).sample() for pp in probs]        
         return torch.tensor(result, dtype=torch.int32, device=self.device)
 
-    def mask_grad(self):
+    def mask_grad(self):        
         self.log_em.grad *= self.log_em_grad_mask
         return self
     
@@ -203,6 +203,11 @@ class TranscriptEmission(torch.nn.Module):
         return torch.tensor(result, dtype=torch.int32, device=self.device)
         
     def mask_grad(self):
+        print(self.state_means.grad)
+        print(self.state_phis.grad)
+        print(self.state_grad_mask)
+        exit(0)
+        
         self.state_means.grad *= self.state_grad_mask
         self.state_phis.grad *= self.state_grad_mask
         return self

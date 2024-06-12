@@ -663,7 +663,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", False
+    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", True
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -681,7 +681,7 @@ if __name__ == "__main__":
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
 
-    emission_model = categorical
+    emission_model = transcripts
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -711,7 +711,7 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-
+    """
     log_like = modelHMM.log_like(obvs, hidden_states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
@@ -781,13 +781,13 @@ if __name__ == "__main__":
     logger.info(
         f"Found a state decoding (max. disjoint posterior):\n{posterior_decoded_states}"
     )
-    """
+
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(
         hidden_states, posterior_decoded_states
     ), f"State decoding and truth inconsistent:\n{hidden_states}\n{posterior_decoded_states}."
-    """
-    """
+
+
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
 
     # NB the last transition is (i, i + 1) == (L - 1, L).
