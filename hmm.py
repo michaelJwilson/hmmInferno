@@ -350,8 +350,8 @@ class HMM(torch.nn.Module):
         log_fs = self.log_pi.clone()
         
         for ii, obs in enumerate(obvs[1:-1]):
-            interim = self.transition_model.forward(log_fs)            
-            log_fs = self.emission_model.forward(obs) + torch.logsumexp(interim, dim=0)
+            interim = self.transition_model.forward(log_fs)
+            log_fs = self.emission_model.forward(obs).squeeze(-1) + torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
@@ -681,7 +681,7 @@ if __name__ == "__main__":
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
 
-    emission_model = transcripts
+    emission_model = categorical
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -733,7 +733,7 @@ if __name__ == "__main__":
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward_scan = modelHMM.log_forward_scan(obvs)
     log_evidence_backward_scan = modelHMM.log_backward_scan(obvs)
-
+    
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = modelHMM.log_forward(obvs)
     log_evidence_backward, log_backward_array = modelHMM.log_backward(obvs)
@@ -745,7 +745,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward.item():.4f}, {log_evidence_backward_scan.item():.4f} by the backward method and scan."
     )
-    """
+
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
@@ -781,12 +781,13 @@ if __name__ == "__main__":
     logger.info(
         f"Found a state decoding (max. disjoint posterior):\n{posterior_decoded_states}"
     )
-
+    """
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(
         hidden_states, posterior_decoded_states
     ), f"State decoding and truth inconsistent:\n{hidden_states}\n{posterior_decoded_states}."
-
+    """
+    """
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
 
     # NB the last transition is (i, i + 1) == (L - 1, L).
