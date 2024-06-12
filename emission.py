@@ -128,15 +128,17 @@ class BookendDist:
         return torch.tensor([0], dtype=torch.int32, device=self.device)
 
     def log_prob(self, obs):
-        result = torch.zeros(len(obs), device=self.device)
-        result[obs > 0] = LOG_PROBS_PRECISION
-        return result
+        if obs.dim() > 0:
+            result = torch.zeros(len(obs), dtype=torch.int32, device=self.device)
+            result[obs > 0] = LOG_PROBS_PRECISION
+            return result
+        else:
+            return torch.tensor([0], dtype=torch.int32, device=self.device)
 
 class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-
     def __init__(
         self,
         n_states,

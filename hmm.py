@@ -295,7 +295,7 @@ class HMM(torch.nn.Module):
         # NB relies on transition from 0 to any state to be equal.
         log_vs = self.log_pi.clone()
 
-        for ii, obs in enumerate(obvs[1:]):
+        for ii, obs in enumerate(obvs[1:]):            
             interim = self.transition_model.forward(log_vs)
 
             log_vs, max_states = torch.max(interim, dim=0)
@@ -707,7 +707,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found a joint probability P(x, pi)={log_joint_prob:.4f} with trace:\n{trace_table}"
     )
-    """
+
     # NB Most probable state sequence
     viterbi_decoded_states = modelHMM.viterbi_traceback(trace_table, penultimate_state)
 
@@ -730,7 +730,7 @@ if __name__ == "__main__":
     logger.info(
         f"Found the evidence to be {log_evidence_backward:.4f}, {log_evidence_backward_scan:.4f} by the backward method and scan."
     )
-
+    """
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
