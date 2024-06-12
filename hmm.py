@@ -663,12 +663,12 @@ if __name__ == "__main__":
     baseline_exp = torch.randn(n_segments, device=device)
 
     # casino = Casino(device=device)
-    # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
     transcripts = TranscriptEmission(
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
     
-    emission_model = transcripts
+    emission_model = categorical
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -720,7 +720,7 @@ if __name__ == "__main__":
     # NB P(x) marginalised over hidden states by forward & backward scan - no array traceback.
     log_evidence_forward_scan = modelHMM.log_forward_scan(obvs)
     log_evidence_backward_scan = modelHMM.log_backward_scan(obvs)
-    """
+
     # NB P(x) marginalised over hidden states by forward & backward method - array traceback.
     log_evidence_forward, log_forward_array = modelHMM.log_forward(obvs)
     log_evidence_backward, log_backward_array = modelHMM.log_backward(obvs)
@@ -803,5 +803,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    """
+
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
