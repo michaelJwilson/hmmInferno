@@ -1,3 +1,4 @@
+import sys
 import torch
 import logging
 from utils import get_device, get_log_probs_precision
@@ -108,7 +109,14 @@ class TranscriptEmission(torch.nn.Module):
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
 
-    def __init__(self, n_states, spots_total_transcripts, baseline_exp, max_read_depth=25, device=None):
+    def __init__(
+        self,
+        n_states,
+        spots_total_transcripts,
+        baseline_exp,
+        total_exp_read_depth=25,
+        device=None,
+    ):
         super(TranscriptEmission, self).__init__()
 
         self.n_states = n_states
@@ -120,31 +128,29 @@ class TranscriptEmission(torch.nn.Module):
         # NB total genomic transcripts per spot, n e (1, .., N).
         self.spots_total_transcripts = spots_total_transcripts
 
-        logger.warning(f"Assuming a max. read depth of {max_read_depth}.")
+        logger.warning(f"Assuming a total exp. read depth of {total_exp_read_depth}.")
 
-        self.state_mus, self.state_phis = self.init_emission(max_read_depth=max_read_depth)
+        self.state_mus, self.state_phis = self.init_emission(
+            total_exp_read_depth=total_exp_read_depth
+        )
 
-        # NB torch parameter updates are propagated through torch dists,                                                                                                                       
-        #    i.e. on parameter update, sample outputs will update, etc.                                                                                                                        
-        state_dists = {
-            state: NegativeBinomial(
-                state_mus[state], 1.0 - state_phis[state]
-            )
+        # NB torch parameter updates are propagated through torch dists,
+        #    i.e. on parameter update, sample outputs will update, etc.
+        self.state_dists = {
+            state: NegativeBinomial(self.state_mus[state], 1.0 - self.state_phis[state])
             for state in range(self.n_states)
         }
 
-        return state_mus, state_phis, state_dists
-        
-    def init_emission(self, max_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION):
-        # NB generator for normal(0., 1.)                                                                                                                             
-        state_mus = max_read_depth * torch.rand(self.n_states, device=self.device)
+    def init_emission(self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION):
+        # NB generator for normal(0., 1.)
+        state_mus = total_exp_read_depth * torch.rand(self.n_states, device=self.device)
         state_mus = torch.nn.Parameter(state_mus)
 
         state_phis = torch.rand(self.n_states, device=self.device)
         state_phis = torch.nn.Parameter(state_phis)
 
         return state_mus, state_phis
-        
+
     def sample(self, state):
         return self.state_dists[state].sample()
 
@@ -160,7 +166,10 @@ class TranscriptEmission(torch.nn.Module):
             if obs is None:
                 raise NotImplementedError()
             else:
-                return torch.stack([self.log_emission(state, obs) for state in range(self.n_states)], dim=0)
+                return torch.stack(
+                    [self.log_emission(state, obs) for state in range(self.n_states)],
+                    dim=0,
+                )
         elif obs is None:
             raise NotImplementedError()
         else:
@@ -187,7 +196,18 @@ class TranscriptEmission(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    # TODO set seed for cuda / mps                                                                                                                                                                                     
+    formatter = logging.Formatter(
+        "%(asctime)s - %(process)d - %(levelname)s - %(name)s - %(message)s"
+    )
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    # handler = RichHandler(rich_tracebacks=True)                                                                                                                                                                                                           
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    
+    # TODO set seed for cuda / mps
     torch.manual_seed(314)
 
     # NB K states with N spots, G segments on device.
@@ -200,8 +220,8 @@ if __name__ == "__main__":
         K, spots_total_transcripts, baseline_exp, device=device
     )
 
-    obs = 25 * torch.randint(low=0, high=26, size=(N * G,), device=device)    
+    obs = 25 * torch.randint(low=0, high=26, size=(N * G,), device=device)
     result = emitter.log_emission(None, obs)
-    
-    print(result.shape)    
-    print("Done.")
+
+    logger.info(result.shape)
+    logger.info("Done.")
