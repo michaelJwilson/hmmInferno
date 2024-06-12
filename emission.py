@@ -86,10 +86,21 @@ class CategoricalEmission(torch.nn.Module):
         probs = self.log_emission(state, None).exp()
         return Categorical(probs).sample()
 
+    def mask_grad(self):
+        self.log_em.grad *= self.log_em_grad_mask
+        return self
+    
     def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs) bar bookend row.
         return self.log_emission(None, obs).log_softmax(dim=0)
-
+        
+    def finalize_training(self):
+        self.log_em.data = CategoricalEmission.normalize_emission(
+            self.log_em.data
+        )
+        
+        return self
+        
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
@@ -107,20 +118,17 @@ class CategoricalEmission(torch.nn.Module):
         """
         return {"log_em": self.log_em}
 
-
 class BookendDist:
-    def __init__(self):
-        pass
-
+    def __init__(self, device=None):
+        self.device = get_device() if device is None else get_device()
+        
     def sample(self):
-        return 0
+        return torch.tensor(0, dtype=torch.int32, device=self.device)
 
     def log_prob(self, obs):
-        if abs(obs) > 0:
-            return LOG_PROBS_PRECISION
-        else:
-            return 0.0
-
+        result = torch.zeros(len(obs), device=self.device)
+        result[obs > 0] = LOG_PROBS_PRECISION
+        return result
 
 class TranscriptEmission(torch.nn.Module):
     """
@@ -167,7 +175,8 @@ class TranscriptEmission(torch.nn.Module):
             for state in range(self.n_states)
         }
 
-        self.state_dists[0] = BookendDist()
+        # NB 0 should be first key
+        self.state_dists = {0: BookendDist(device=self.device)} | self.state_dists
 
     def init_emission(
         self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION
@@ -186,29 +195,43 @@ class TranscriptEmission(torch.nn.Module):
 
     def sample(self, state):
         # TODO efficient? len(state) != 1
-        state = get_scalar(state)
-        return self.state_dists[state].sample()
+        result = [self.state_dists[ss].sample() for ss in get_scalar(state)]        
+        return torch.tensor(result, device=self.device)
 
+    def mask_grad(self):
+        print(self.state_means.grad)
+        print(self.state_phis.grad)
+        exit(0)
+        
+        self.state_means.grad *= self.state_grad_mask
+        self.state_phis.grad *= self.state_grad_mask
+        return self
+        
     def forward(self, obs):
         # NB forward is to be used for training only.
-        raise NotImplementedError()
+        return self.log_emission(None, obs)
 
+    def finalize_training(self):
+        return self
+        
     def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting
-        """
+        """        
         if state is None:
             if obs is None:
                 raise NotImplementedError()
             else:
                 return torch.stack(
-                    [self.log_emission(state, obs) for state in range(self.n_states)],
+                    [self.log_emission(state, obs) for state in self.state_dists.keys()],
                     dim=0,
                 )
         elif obs is None:
             raise NotImplementedError()
-        else:
-            return self.state_dists[state].log_prob(obs)
+        else:            
+            # TODO copy warning on log_probs a tensor.
+            result = [self.state_dists[ss].log_prob(obs) for ss in get_scalar(state)]
+            return torch.tensor(result, device=self.device)
 
     def to_device(self, device):
         self.device = device
@@ -233,7 +256,6 @@ class TranscriptEmission(torch.nn.Module):
         """
         Dict with named torch parameters.
         """
-
         return {"state_means": self.state_means, "state_phis": self.state_phis}
 
 

@@ -245,7 +245,7 @@ class HMM(torch.nn.Module):
 
         return sequence[1:]
 
-    def sample_obvs(self, n_seq, hidden=None, bookend=False):
+    def sample(self, n_seq, hidden=None, bookend=False):
         """
         TODO assumes categorical - move to emission.
         """
@@ -259,8 +259,6 @@ class HMM(torch.nn.Module):
 
         for state in hidden:
             emit = self.emission_model.sample(state)
-            emit = get_scalar(emit)
-            
             obvs.append(emit)
 
         return torch.tensor(obvs, dtype=torch.int32, device=self.device)
@@ -580,6 +578,7 @@ class HMM(torch.nn.Module):
                 f"Ready to train {key} parameter with torch, initialised to:\n{self.parameters_dict[key]}"
             )
 
+        # TODO weight scheduler.            
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
@@ -590,10 +589,11 @@ class HMM(torch.nn.Module):
             self.transition_model.log_trans.grad *= (
                 self.transition_model.trans_grad_mask
             )
+            
+            self.emission_model = self.emission_model.mask_grad()
 
-            # TODO categorical specific - move to emission?
-            self.emission_model.log_em.grad *= self.emission_model.log_em_grad_mask
-
+            exit(0)
+            
             optimizer.step()
 
             if epoch % 10 == 0:
@@ -603,15 +603,11 @@ class HMM(torch.nn.Module):
 
         # NB evaluation, not training, mode.
         self.eval()
-
-        # TODO categorical specific - move to emission?
-        self.emission_model.log_em.data = CategoricalEmission.normalize_emission(
-            self.emission_model.log_em.data
+        self.emission_model.finalize_training()
+        self.log_trans.data = MarkovTransition.normalize_transitions(
+            self.log_trans.data
         )
-        self.transition_model.log_trans.data = MarkovTransition.normalize_transitions(
-            self.transition_model.log_trans.data
-        )
-
+        
         for key in self.parameters_dict:
             logger.info(
                 f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
@@ -653,13 +649,15 @@ class HMM(torch.nn.Module):
         self.transition_model = self.transition_model.to_device(device)
         self.emission_model = self.emission_model.to_device(device)
 
+        return self
 
+    
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 8, 200, True, "cpu", True
+    n_states, n_seq, diag, device, train = 8, 200, True, "cpu", False
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -691,11 +689,11 @@ if __name__ == "__main__":
 
     # NB hidden states matched to observed time steps.
     hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
-    obvs = genHMM.sample_obvs(n_seq, hidden_states)
-
+    obvs = genHMM.sample(n_seq, hidden_states)
+    
     logger.info(f"Generated hidden sequence:\n{hidden_states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-
+    """
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
@@ -704,7 +702,7 @@ if __name__ == "__main__":
         device=device,
         name="modelHMM",
     )
-    """
+
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
 

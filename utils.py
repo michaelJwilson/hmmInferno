@@ -1,7 +1,8 @@
 import torch
 
+
 def get_device():
-    # NB mac                                                                                                                                                                                                         
+    # NB mac
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.backends.gpu.is_available():
@@ -11,8 +12,9 @@ def get_device():
 
     return device
 
+
 def bookend_sequence(sequence, device=None):
-    """                                                                                                                                                                                                           
+    """
     Bookend a sequence with the 0-state.
     """
     return torch.cat(
@@ -24,17 +26,26 @@ def bookend_sequence(sequence, device=None):
         dim=0,
     )
 
+
 def no_grad(func):
     def wrapper(*args, **kwargs):
         with torch.no_grad():
             return func(*args, **kwargs)
+
     return wrapper
 
+
 def get_log_probs_precision():
-    return -99.
+    return -99.0
+
 
 def get_scalar(scalar):
-    if isinstance(scalar, torch.Tensor):
-        scalar = scalar.item()
-
-    return scalar
+    if isinstance(scalar, int):
+        yield scalar
+    elif isinstance(scalar, torch.Tensor):
+        for element in scalar:
+            yield element.item()
+    else:
+        raise RuntimeError(
+            f"get_scalars() does not support input of type {type(scalar)} and len {len(scalar)}.  Found {scalar}."
+        )
