@@ -38,13 +38,15 @@ def no_grad(func):
 def get_log_probs_precision():
     return -99.0
 
-
-def get_scalar(scalar):
-    if isinstance(scalar, int):
-        yield scalar
-    elif isinstance(scalar, torch.Tensor):
-        for element in scalar:
-            yield element.item()
+def get_scalars(scalars):
+    if isinstance(scalars, int):
+        yield scalars
+    elif isinstance(scalars, torch.Tensor):
+        if scalars.dim() == 0:
+            yield scalar.item()
+        else:
+            for ss in scalars:
+                yield ss.item()
     else:
         raise RuntimeError(
             f"get_scalars() does not support input of type {type(scalar)} and len {len(scalar)}.  Found {scalar}."

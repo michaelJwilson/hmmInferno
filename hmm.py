@@ -15,9 +15,8 @@ from utils import (
     no_grad,
     get_log_probs_precision,
     get_log_probs_precision,
-    get_scalar,
 )
-from rich.logging import RichHandler
+# from rich.logging import RichHandler
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
 
@@ -254,14 +253,8 @@ class HMM(torch.nn.Module):
 
         if bookend:
             assert hidden[0].item() == hidden[-1].item() == 0
-
-        obvs = []
-
-        for state in hidden:
-            emit = self.emission_model.sample(state)
-            obvs.append(emit)
-
-        return torch.tensor(obvs, dtype=torch.int32, device=self.device)
+            
+        return self.emission_model.sample(hidden)
 
     def log_like(self, obvs, states, bookend=False):
         """
@@ -510,19 +503,19 @@ class HMM(torch.nn.Module):
         # NB TODO exp. for bookend state transition?
         return exp_transition_counts
 
+    # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
     def exp_emission_counts(self, obvs, pseudo_counts=None):
         """ """
         assert obvs[0] == obvs[-1] == 0
 
         if pseudo_counts is None:
             exp_emission_counts = torch.zeros(
-                (self.n_states, self.n_obvs), device=self.device
+                (self.n_states, self.emission_model.n_obvs), device=self.device
             )
         else:
             # TODO assert shape etc.
             exp_emission_counts = pseduo_counts
 
-        # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class?
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         log_backward_evidence, log_backward_array = self.log_backward(obvs)
 
@@ -592,8 +585,6 @@ class HMM(torch.nn.Module):
             
             self.emission_model = self.emission_model.mask_grad()
 
-            exit(0)
-            
             optimizer.step()
 
             if epoch % 10 == 0:
@@ -657,7 +648,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 8, 200, True, "cpu", False
+    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", False
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -670,12 +661,12 @@ if __name__ == "__main__":
     baseline_exp = torch.randn(n_segments, device=device)
 
     # casino = Casino(device=device)
-    # categorical = CategoricalEmission(n_states=4, diag=diag, n_obvs=4, device=device)
-    transcripts = TranscriptEmission(
-        n_states, spots_total_transcripts, baseline_exp, device=device
-    )
+    categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    # transcripts = TranscriptEmission(
+    #    n_states, spots_total_transcripts, baseline_exp, device=device
+    #)
     
-    emission_model = transcripts
+    emission_model = categorical
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -690,10 +681,10 @@ if __name__ == "__main__":
     # NB hidden states matched to observed time steps.
     hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
     obvs = genHMM.sample(n_seq, hidden_states)
-    
+
     logger.info(f"Generated hidden sequence:\n{hidden_states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-    """
+
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
@@ -709,7 +700,7 @@ if __name__ == "__main__":
     log_like = modelHMM.log_like(obvs, hidden_states)
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
-
+    
     # NB P(x, pi) with tracing for most probably state sequence
     log_joint_prob, penultimate_state, trace_table = modelHMM.viterbi(obvs, traced=True)
 
@@ -810,5 +801,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    """
+
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

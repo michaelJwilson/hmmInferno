@@ -1,7 +1,8 @@
 import sys
 import torch
 import logging
-from utils import get_device, get_log_probs_precision, get_scalar
+from torch.distributions import Categorical
+from utils import get_device, get_log_probs_precision, get_scalars
 from dist import NegativeBinomial
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
@@ -83,8 +84,9 @@ class CategoricalEmission(torch.nn.Module):
             return self.log_em[state, obs]
 
     def sample(self, state):
-        probs = self.log_emission(state, None).exp()
-        return Categorical(probs).sample()
+        probs = [self.log_emission(ss, None).exp() for ss in get_scalars(state)]
+        result = [Categorical(pp).sample() for pp in probs]        
+        return torch.tensor(result, dtype=torch.int32, device=self.device)
 
     def mask_grad(self):
         self.log_em.grad *= self.log_em_grad_mask
@@ -123,7 +125,7 @@ class BookendDist:
         self.device = get_device() if device is None else get_device()
         
     def sample(self):
-        return torch.tensor(0, dtype=torch.int32, device=self.device)
+        return torch.tensor([0], dtype=torch.int32, device=self.device)
 
     def log_prob(self, obs):
         result = torch.zeros(len(obs), device=self.device)
@@ -192,17 +194,13 @@ class TranscriptEmission(torch.nn.Module):
         state_phis = torch.nn.Parameter(state_phis)
 
         return state_means, state_phis
-
+    
     def sample(self, state):
         # TODO efficient? len(state) != 1
-        result = [self.state_dists[ss].sample() for ss in get_scalar(state)]        
-        return torch.tensor(result, device=self.device)
-
-    def mask_grad(self):
-        print(self.state_means.grad)
-        print(self.state_phis.grad)
-        exit(0)
+        result = [self.state_dists[ss].sample().item() for ss in get_scalars(state)]
+        return torch.tensor(result, dtype=torch.int32, device=self.device)
         
+    def mask_grad(self):
         self.state_means.grad *= self.state_grad_mask
         self.state_phis.grad *= self.state_grad_mask
         return self
@@ -230,7 +228,7 @@ class TranscriptEmission(torch.nn.Module):
             raise NotImplementedError()
         else:            
             # TODO copy warning on log_probs a tensor.
-            result = [self.state_dists[ss].log_prob(obs) for ss in get_scalar(state)]
+            result = [self.state_dists[ss].log_prob(obs) for ss in get_scalars(state)]
             return torch.tensor(result, device=self.device)
 
     def to_device(self, device):
