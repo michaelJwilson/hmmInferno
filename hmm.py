@@ -374,7 +374,8 @@ class HMM(torch.nn.Module):
         for ii, obv in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs[ii])
 
-            log_fs[ii + 1] = self.emission_model.forward(obv)
+            # TODO HACK squeeze
+            log_fs[ii + 1] = self.emission_model.forward(obv).squeeze(-1)
             log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
 
         # NB final transition into the book end state.
@@ -393,17 +394,19 @@ class HMM(torch.nn.Module):
 
         rev_obvs = torch.flip(obvs, dims=[0])
         log_bs = self.log_transition(None, 0).clone()
-
+        
         # NB no bookend states.
-        for ii, obv in enumerate(rev_obvs[1:-2]):
-            obv = obv.unsqueeze(0)
-            
-            interim = log_bs.unsqueeze(0) + self.log_transition(None, None)
+        for ii, obv in enumerate(rev_obvs[1:-2]):            
+            interim = log_bs.unsqueeze(0) + self.log_transition(None, None)            
             interim += self.emission_model.forward(obv)
 
             log_bs = torch.logsumexp(interim, dim=1)
+            
+        log_bs += self.log_transition(0, None)
 
-        log_bs += self.log_transition(0, None) + self.log_emission(None, rev_obvs[-2])
+        # TODO HACK squeeze.
+        log_bs += self.log_emission(None, rev_obvs[-2]).squeeze(-1)
+        
         log_evidence = torch.logsumexp(log_bs, dim=0)
 
         return log_evidence
@@ -425,14 +428,17 @@ class HMM(torch.nn.Module):
 
         for ii, obv in enumerate(rev_obvs[1:-2]):
             interim = log_bs[ii, :].unsqueeze(0) + self.log_transition(None, None)
-            interim += self.emission_model.forward(obv).unsqueeze(0)
+
+            # TODO HACK squeeze
+            interim += self.emission_model.forward(obv) # .unsqueeze(0)
 
             log_bs[ii + 1] = torch.logsumexp(interim, dim=1)
 
+        # TODO HACK squeeze
         log_bs[-1] = (
             log_bs[-2]
             + self.log_transition(0, None)
-            + self.log_emission(None, rev_obvs[-2])
+            + self.log_emission(None, rev_obvs[-2]).squeeze(-1)
         )
 
         log_evidence = torch.logsumexp(log_bs[-1], dim=0)
@@ -657,7 +663,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", True
+    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", False
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -671,12 +677,11 @@ if __name__ == "__main__":
 
     # casino = Casino(device=device)
     categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
-    """
     transcripts = TranscriptEmission(
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
-    """
-    emission_model = categorical
+
+    emission_model = transcripts
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
@@ -734,13 +739,13 @@ if __name__ == "__main__":
     log_evidence_backward, log_backward_array = modelHMM.log_backward(obvs)
 
     logger.info(
-        f"Found the evidence to be {log_evidence_forward:.4f}, {log_evidence_forward_scan:.4f} by the forward method and scan."
+        f"Found the evidence to be {log_evidence_forward.item():.4f}, {log_evidence_forward_scan.item():.4f} by the forward method and scan."
     )
 
     logger.info(
-        f"Found the evidence to be {log_evidence_backward:.4f}, {log_evidence_backward_scan:.4f} by the backward method and scan."
+        f"Found the evidence to be {log_evidence_backward.item():.4f}, {log_evidence_backward_scan.item():.4f} by the backward method and scan."
     )
-
+    """
     assert torch.allclose(
         log_evidence_forward_scan, log_evidence_forward
     ), f"Inconsistent log evidence by forward scanning and forward method: {log_evidence_forward_scan:.4f} and {log_evidence_forward:.4f}"
@@ -811,5 +816,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

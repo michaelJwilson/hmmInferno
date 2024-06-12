@@ -230,6 +230,7 @@ class TranscriptEmission(torch.nn.Module):
             raise NotImplementedError()
         else:            
             # TODO copy warning on log_probs a tensor.
+            # TODO dtype=torch.int32
             result = [self.state_dists[ss].log_prob(obs) for ss in get_scalars(state)]
             return torch.tensor(result, device=self.device)
 
