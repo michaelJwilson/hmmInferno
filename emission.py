@@ -150,16 +150,15 @@ class TranscriptEmission(torch.nn.Module):
         Getter for log_em with broadcasting
         """
         if state is None:
-            return 
+            if obs is None:
+                raise NotImplementedError()
+            else:
+                return torch.stack([self.log_emission(state, obs) for state in range(self.n_states)], dim=0)
         elif obs is None:
-            return 
+            raise NotImplementedError()
         else:
-            return
+            return self.state_dists[state].log_prob(obs)
 
-
-        log_prob
-        
-        
         # num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
         # prob_success = phi
 
@@ -167,8 +166,6 @@ class TranscriptEmission(torch.nn.Module):
 
         # TODO CHECK
         # num_fail = exp_trials - num_success
-
-        raise NotImplementedError()
 
     def to_device(self, device):
         self.device = device
@@ -185,15 +182,19 @@ class TranscriptEmission(torch.nn.Module):
 if __name__ == "__main__":
     # TODO set seed for cuda / mps                                                                                                                                                                                      
     torch.manual_seed(314)
-        
+
+    # NB K states with N spots, G segments on device.
     K, N, G, device = 8, 100, 25, "cpu"
 
-    spots_total_transcripts = torch.randn(K, device=device)
-    baseline_exp = torch.randn(K, device=device)
+    spots_total_transcripts = torch.randn(N, device=device)
+    baseline_exp = torch.randn(G, device=device)
 
     emitter = TranscriptEmission(
-        N, spots_total_transcripts, baseline_exp, device=device
+        K, spots_total_transcripts, baseline_exp, device=device
     )
 
-    print(emitter.state_mus[0], emitter.sample(0))
+    obs = 25 * torch.randint(low=0, high=26, size=(N * G,), device=device)    
+    result = emitter.log_emission(None, obs)
+    
+    print(result.shape)    
     print("Done.")
