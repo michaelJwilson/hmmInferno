@@ -8,13 +8,14 @@ import torch
 from torch.distributions import Categorical
 from torch.optim import Adam
 from transition import MarkovTransition
-from emission import CategoricalEmission
+from emission import CategoricalEmission, TranscriptEmission
 from utils import (
     bookend_sequence,
     get_device,
     no_grad,
     get_log_probs_precision,
     get_log_probs_precision,
+    get_scalar,
 )
 from rich.logging import RichHandler
 
@@ -179,7 +180,7 @@ class HMM(torch.nn.Module):
         self,
         n_states,
         emission_model,
-        transition_model,
+        transition_model=None,
         device=None,
         log_probs_precision=LOG_PROBS_PRECISION,
         name="HMM",
@@ -199,9 +200,6 @@ class HMM(torch.nn.Module):
         assert (
             self.n_states == emission_model.n_states
         ), f"State mismatch between HMM and Emission, found {self.n_states} but expected {emission_model.n_states}."
-
-        # NB number of possible observable states, as opposed to sequence length.
-        self.n_obvs = emission_model.n_obvs
 
         # NB We start (and end) in the bookend state.  No gradient required.
         self.log_pi = log_probs_precision * torch.ones(
@@ -260,10 +258,10 @@ class HMM(torch.nn.Module):
         obvs = []
 
         for state in hidden:
-            probs = self.log_emission(state, None).exp()
-            emit = Categorical(probs).sample()
-
-            obvs.append(emit.item())
+            emit = self.emission_model.sample(state)
+            emit = get_scalar(emit)
+            
+            obvs.append(emit)
 
         return torch.tensor(obvs, dtype=torch.int32, device=self.device)
 
@@ -661,22 +659,30 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_seq, diag, device, train = 200, True, "cpu", True
-
+    n_states, n_seq, diag, device, train = 8, 200, True, "cpu", True
+    n_spots, n_segments = 100, 100
+    
     start = time.time()
 
-    transition_model = MarkovTransition(n_states=4, diag_rate=0.5, device=device)
+    transition_model = MarkovTransition(n_states=n_states, diag_rate=0.5, device=device)
     transition_model.validate()
 
-    # casino = Casino(device=device)
-    categorical = CategoricalEmission(n_states=4, diag=diag, n_obvs=4, device=device)
+    # TODO
+    spots_total_transcripts = torch.randn(n_spots, device=device)
+    baseline_exp = torch.randn(n_segments, device=device)
 
-    emission_model = categorical
+    # casino = Casino(device=device)
+    # categorical = CategoricalEmission(n_states=4, diag=diag, n_obvs=4, device=device)
+    transcripts = TranscriptEmission(
+        n_states, spots_total_transcripts, baseline_exp, device=device
+    )
+    
+    emission_model = transcripts
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
-        n_states=emission_model.n_states - 1,
+        n_states=n_states,
         emission_model=emission_model,
         transition_model=transition_model,
         device=device,
@@ -689,10 +695,10 @@ if __name__ == "__main__":
 
     logger.info(f"Generated hidden sequence:\n{hidden_states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-
+    """
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
-        n_states=emission_model.n_states - 1,
+        n_states=n_states,
         emission_model=emission_model,
         transition_model=None,
         device=device,
@@ -806,5 +812,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

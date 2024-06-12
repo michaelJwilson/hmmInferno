@@ -1,7 +1,7 @@
 import sys
 import torch
 import logging
-from utils import get_device, get_log_probs_precision
+from utils import get_device, get_log_probs_precision, get_scalar
 from dist import NegativeBinomial
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
@@ -14,7 +14,6 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
-
     def __init__(self, n_states, n_obvs, diag=False, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -82,6 +81,10 @@ class CategoricalEmission(torch.nn.Module):
         else:
             return self.log_em[state, obs]
 
+    def sample(self, state):
+        probs = self.log_emission(state, None).exp()
+        return Categorical(probs).sample()
+        
     def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs) bar bookend row.
         return self.log_emission(None, obs).log_softmax(dim=0)
@@ -108,7 +111,6 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-
     def __init__(
         self,
         n_states,
@@ -119,7 +121,7 @@ class TranscriptEmission(torch.nn.Module):
     ):
         super(TranscriptEmission, self).__init__()
 
-        self.n_states = n_states
+        self.n_states = 1 + n_states
         self.device = get_device() if device is None else device
 
         # NB baseline exp. per genomic segment, g e (1, .., G).
@@ -130,29 +132,37 @@ class TranscriptEmission(torch.nn.Module):
 
         logger.warning(f"Assuming a total exp. read depth of {total_exp_read_depth}.")
 
-        self.state_mus, self.state_phis = self.init_emission(
+        self.state_means, self.state_phis = self.init_emission(
             total_exp_read_depth=total_exp_read_depth
         )
 
         # NB torch parameter updates are propagated through torch dists,
         #    i.e. on parameter update, sample outputs will update, etc.
         self.state_dists = {
-            state: NegativeBinomial(self.state_mus[state], 1.0 - self.state_phis[state])
+            1 + state: NegativeBinomial(self.state_means[state], 1.0 - self.state_phis[state])
             for state in range(self.n_states)
         }
 
     def init_emission(self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION):
-        # NB generator for normal(0., 1.)
-        state_mus = total_exp_read_depth * torch.rand(self.n_states, device=self.device)
-        state_mus = torch.nn.Parameter(state_mus)
+        # NB generator for normal(0., 1.); state_means == Tn * Lg * mu
+        state_means = total_exp_read_depth * torch.rand(self.n_states, device=self.device)
+        state_means = torch.nn.Parameter(state_means)
 
+        # NB binomial like
         state_phis = torch.rand(self.n_states, device=self.device)
         state_phis = torch.nn.Parameter(state_phis)
 
-        return state_mus, state_phis
+        return state_means, state_phis
 
     def sample(self, state):
-        return self.state_dists[state].sample()
+        # TODO efficient? len(state) != 1
+        state = get_scalar(state)
+
+        # NB bookend state with certainty
+        if state == 0:
+            return 0
+        else:
+            return self.state_dists[state].sample()
 
     def forward(self, obs):
         # NB forward is to be used for training only.
@@ -173,20 +183,21 @@ class TranscriptEmission(torch.nn.Module):
         elif obs is None:
             raise NotImplementedError()
         else:
+            if state == 0:
+                if abs(obs) > 0:
+                    return -LOG_PROBS_PRECISION
+                else:
+                    return 1.0
+            
             return self.state_dists[state].log_prob(obs)
-
-        # num_success = total_genome_transcipts * baseline_exp * (agm + bgm) / eff_read_depth
-        # prob_success = phi
-
-        # exp_trials = torch.round(torch.tensor(num_success / prob_success))
-
-        # TODO CHECK
-        # num_fail = exp_trials - num_success
 
     def to_device(self, device):
         self.device = device
         return self
 
+    def validate(self):
+        logger.info(f"Negative Binomial emission with means and overdispersion:\n{self.state_means}\n{self.state_phis}\n")
+    
     @property
     def parameters_dict(self):
         """
@@ -214,7 +225,7 @@ if __name__ == "__main__":
     K, N, G, device = 8, 100, 25, "cpu"
     total_exp_read_depth = 25
     
-    
+    # NB
     spots_total_transcripts = torch.randn(N, device=device)
     baseline_exp = torch.randn(G, device=device)
 

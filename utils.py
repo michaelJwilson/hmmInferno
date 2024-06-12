@@ -32,3 +32,9 @@ def no_grad(func):
 
 def get_log_probs_precision():
     return -99.
+
+def get_scalar(scalar):
+    if isinstance(scalar, torch.Tensor):
+        scalar = scalar.item()
+
+    return scalar
