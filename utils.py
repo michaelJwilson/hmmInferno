@@ -1,5 +1,11 @@
 import torch
 
+def get_log_probs_precision():
+    return -99.0
+
+def get_bookend_token():
+    # NB should be >>> expected transcript count                                                                                                                                                                                                                                
+    return 999_999_999
 
 def get_device():
     # NB mac
@@ -13,15 +19,15 @@ def get_device():
     return device
 
 
-def bookend_sequence(sequence, device=None, dtype=torch.int32):
+def bookend_sequence(sequence, device=None, dtype=torch.int32, token=get_bookend_token()):
     """
     Bookend a sequence with the 0-state.
     """
     return torch.cat(
         (
-            torch.tensor([0], dtype=dtype, device=device),
+            torch.tensor([token], dtype=dtype, device=device),
             sequence,
-            torch.tensor([0], dtype=dtype, device=device),
+            torch.tensor([token], dtype=dtype, device=device),
         ),
         dim=0,
     )
@@ -34,9 +40,6 @@ def no_grad(func):
 
     return wrapper
 
-
-def get_log_probs_precision():
-    return -99.0
 
 def get_scalars(scalars):
     if isinstance(scalars, int):

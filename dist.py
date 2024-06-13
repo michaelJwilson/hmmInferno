@@ -1,7 +1,8 @@
 import torch
 from torch.distributions import negative_binomial
-from utils import set_scalars, get_device
+from utils import set_scalars, get_device, get_bookend_token
 
+BOOKEND_TOKEN = get_bookend_token()
 
 class NegativeBinomial:
     """
@@ -46,7 +47,7 @@ class BookendDist:
         self.device = get_device() if device is None else device
 
     def sample(self):
-        return set_scalars(0, device=self.device, requires_grad=False)
+        return set_scalars(BOOKEND_TOKEN, device=self.device, requires_grad=False)
 
     def log_prob(self, obs):
         if obs.dim() > 0:
@@ -56,7 +57,7 @@ class BookendDist:
             result[obs > 0] = LOG_PROBS_PRECISION
             return result
         else:
-            return set_scalars(0, device=self.device, requires_frad=False)
+            return set_scalars(BOOKEND_TOKEN, device=self.device, requires_frad=False)
 
 
 if __name__ == "__main__":

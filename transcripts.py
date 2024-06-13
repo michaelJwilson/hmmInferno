@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from emission import BookendDist
 from utils import (
     get_log_probs_precision,
+    get_bookend_token,
     get_device,
     set_scalars,
     bookend_sequence,
@@ -16,9 +17,8 @@ from torch.optim import Adam
 from dist import BookendDist
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
-
+BOOKEND_TOKEN = get_bookend_token()
 logger = logging.getLogger(__name__)
-
 
 class TranscriptEmission(torch.nn.Module):
     """
@@ -39,8 +39,6 @@ class TranscriptEmission(torch.nn.Module):
         self.n_states = 1 + n_states
         self.device = get_device() if device is None else device
         self.name = name
-
-        logger.warning(f"Assuming a total exp. read depth of {total_exp_read_depth}.")
 
         state_log_means, state_log_frac_std = self.init_emission(
             total_exp_read_depth=total_exp_read_depth
@@ -73,6 +71,8 @@ class TranscriptEmission(torch.nn.Module):
             self.n_states, device=self.device, requires_grad=True
         )
         """
+        logger.warning(f"Assuming a total exp. read depth of {total_exp_read_depth}.")
+        
         state_means = total_exp_read_depth * (
             1
             + torch.arange(
@@ -115,43 +115,44 @@ class TranscriptEmission(torch.nn.Module):
     @no_grad
     def sample(self, states):
         # NB expect bookends
-        assert states[0] == states[-1] == 0
+        assert states[0] == states[-1] == BOOKEND_TOKEN
 
-        states = -1 + states[1:-1].clone()
+        observable_states = -1 + states[1:-1].clone()
 
         # NB one hot requires int64
         hot_states = F.one_hot(
-            states.to(torch.int64), num_classes=self.n_states - 1
+            observable_states.to(torch.int64), num_classes=(self.n_states - 1)
         ).float()
 
+        # TODO remove clone()
         means = (hot_states @ self.state_log_means.clone()).exp()
         frac_std = (hot_states @ self.state_log_frac_std.clone()).exp()
 
-        # logger.info(f"Inferred state emission means:\n{means}")
+        # logger.debug(f"Inferred state emission means:\n{means}")
         
         var = means + (means * frac_std) ** 2.0
 
-        # logger.info(f"Inferred state emission var:\n{var}")
+        # logger.debug(f"Inferred state emission var:\n{var}")
         
         # NB prob. success
         ps = means / var
 
-        logger.info(f"Inferred prob. of success for {self.name}:\n{ps}")
+        logger.debug(f"Inferred prob. of success for {self.name}:\n{ps}")
         
         # NB number successes
         rs = means * means / (var - means)
 
-        # logger.info(f"Inferred number of successes:\n{rs}")
+        # logger.debug(f"Inferred number of successes:\n{rs}")
         
         # NB < number trials >
         ts = rs / ps
 
-        # logger.info(f"Inferred number of trials:\n{ts}")
+        # logger.debug(f"Inferred number of trials:\n{ts}")
         
         # NB real-valued Polya distribution.
-        fs = ts - rs
+        fs = (ts - rs)
 
-        # logger.info(f"Inferred number of failures:\n{ts}")
+        # logger.debug(f"Inferred number of failures:\n{ts}")
 
         # TODO inefficient
         result = torch.stack(
@@ -160,34 +161,39 @@ class TranscriptEmission(torch.nn.Module):
                     total_count=fs[ii],
                     probs=ps[ii],
                 ).sample()
-                for ii in states
+                for ii in observable_states
             ],
             dim=0,
         )
 
         bookend = self.bookend.sample()
 
+        # TODO requires_grad(False)
         return torch.cat((bookend, result, bookend))
 
-    def forward(self, obs, states=None, drop_bookends=True):
+    def forward(self, obs, states=None):
+        # TODO drop clone?
         obs = torch.atleast_1d(obs.clone())
 
-        if drop_bookends:
-            # NB expect bookends
-            assert obs[0] == obs[-1] == 0            
-            obs = obs[1:-1]
+        # NB expect bookends                                                                                                                                                                                                                                  
+        assert obs[0] == obs[-1] == BOOKEND_TOKEN
 
+        # TODO ugh
+        broadcast = False
+        
         if states is None:
-            states = torch.arange(
-                self.n_states - 1, dtype=torch.int32, device=self.device
+            observable_states = torch.arange(
+                (self.n_states - 1), dtype=torch.int32, device=self.device
             )
+
+            broadcast = True
         else:
-            assert states[0] == states[-1] == 0
-            states = -1 + states[1:-1].clone()
+            assert states[0] == states[-1] == BOOKEND_TOKEN
+            observable_states = -1 + states[1:-1].clone()
 
         # NB forward is to be used for training only.
         hot_states = F.one_hot(
-            states.to(torch.int64), num_classes=self.n_states - 1
+            observable_states.to(torch.int64), num_classes=(self.n_states - 1)
         ).float()
 
         means = (hot_states @ self.state_log_means).exp()
@@ -197,8 +203,6 @@ class TranscriptEmission(torch.nn.Module):
 
         # NB prob. success
         ps = means / var
-
-        assert ps.max().item() <= 1., f"ERROR: invalid probs for means and frac_std:\n{ps}\n{self.state_log_means}\n{self.state_log_frac_std}"
         
         # NB number successes
         rs = means * means / (var - means)
@@ -207,30 +211,44 @@ class TranscriptEmission(torch.nn.Module):
         ts = rs / ps
 
         # NB < number fails >
-        fs = ts - rs
-        
-        if len(states) != len(obs):
+        fs = (ts - rs)
+
+        # NB broadcast to all potential states, including bookend. 
+        if broadcast:
             result = [
                 NegativeBinomial(total_count=fs[ii], probs=ps[ii]).log_prob(obs)
-                for ii in states
+                for ii in observable_states
             ]
+
+            result = torch.stack(result, dim=0)
+            result[:, 0] = LOG_PROBS_PRECISION
+            result[:,-1] = LOG_PROBS_PRECISION
+            
+            bookend_row = LOG_PROBS_PRECISION * torch.ones(len(obs), device=self.device)
+            bookend_row[0] = 0.0
+            bookend_row[-1] = 0.0
+
+            return torch.cat((bookend_row.unsqueeze(0), result), dim=0)
+            
         else:
             result = [
-                NegativeBinomial(total_count=fs[ii], probs=ps[ii]).log_prob(obs[ii])
-                for ii in states
+                NegativeBinomial(total_count=ff, probs=pp).log_prob(oo)
+                for ff, pp, ss, oo in zip(fs, ps, observable_states, obs[1:-1])
             ]
 
-        return torch.stack(result, dim=0)
-
+            # NB log_prob for all obs. with the as defined hidden state in each case.
+            result = torch.stack(result, dim=0)
+            return bookend_sequence(result, device=self.device, dtype=torch.float32, token=0.0)
+            
     def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting
         """
+        # TODO 
         if state is None:
             if obs is None:
                 raise NotImplementedError()
             else:
-                state = self.state_dists.keys()
                 return self.forward(obs, state)
         elif obs is None:
             raise NotImplementedError()
@@ -325,9 +343,12 @@ if __name__ == "__main__":
     train = True
 
     # NB K states with N spots, G segments on device.
-    n_seq, K, N, G, device = 250, 8, 100, 25, "cpu"
+    n_seq, K, N, G, device = 6, 4, 100, 25, "cpu"
     total_exp_read_depth = 25
 
+    # TODO
+    assert n_seq not in [K, K+1]
+    
     # TODO
     spots_total_transcripts = torch.randn(N, device=device)
     baseline_exp = torch.randn(G, device=device)
@@ -348,16 +369,19 @@ if __name__ == "__main__":
 
     logger.info(f"Generated hidden sequence:\n{states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-    
+
     modelEmitter = TranscriptEmission(
-        K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter",
+        K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter", total_exp_read_depth=100,
     )
 
     # samples = modelEmitter.sample(states)
     # result = modelEmitter.forward(obvs, None) 
-    # result = modelEmitter.forward(obvs, states)
+    result = modelEmitter.forward(obvs, states)
 
+    print(result)
+    
+    """
     if train:
         modelEmitter.torch_training(states, obvs)
-
+    """
     logger.info("Done.")

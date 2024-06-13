@@ -348,16 +348,17 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
         
         log_fs = self.log_pi.clone()
-        
+        ems = self.emission_model.forward(obvs).squeeze(-1)
+
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
             log_fs = torch.logsumexp(interim, dim=0)
             """
             if not as_prior:
-                log_fs += self.emission_model.forward(obs, drop_bookends=False).squeeze(-1)
+                log_fs += ems[ii + 1]
             """
             print(len(log_fs))
-            print(self.emission_model.forward(obs, drop_bookends=False).squeeze(-1))
+            print(ems.shape)
             exit(0)
             
         # NB final transition into the book end state; note coefficient is not trained.
