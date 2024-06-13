@@ -34,11 +34,14 @@ class TranscriptEmission(torch.nn.Module):
         
         logger.warning(f"Assuming a total exp. read depth of {total_exp_read_depth}.")
 
-        self.state_means, self.state_phis = self.init_emission(
+        state_log_means, state_log_frac_std = self.init_emission(
             total_exp_read_depth=total_exp_read_depth
         )
 
-        logger.info(f"Initialized {self.name} with means and phis:\n{self.state_means}\n{self.state_phis}")
+        self.state_log_means = torch.nn.Parameter(state_log_means)
+        self.state_log_frac_std = torch.nn.Parameter(state_log_frac_std)
+        
+        logger.info(f"Initialized {self.name} with log means and log frac. std:\n{self.state_log_means}\n{self.state_log_frac_std}")
 
         # NB baseline exp. per genomic segment, g e (1, .., G).                                                                                                                                                                                                          
         self.baseline_exp = baseline_exp
@@ -51,7 +54,7 @@ class TranscriptEmission(torch.nn.Module):
             self.n_states, requires_grad=False, device=self.device
         )
         self.state_grad_mask[0] = 0.0
-
+        
     def init_emission(
         self, total_exp_read_depth=25, log_probs_precision=LOG_PROBS_PRECISION
     ):
@@ -59,39 +62,58 @@ class TranscriptEmission(torch.nn.Module):
         state_means = total_exp_read_depth * torch.rand(
             self.n_states, device=self.device, requires_grad=True
         )
-        state_means = torch.nn.Parameter(state_means)
 
         # NB initialise at high precision
-        state_phis = torch.rand(self.n_states, device=self.device, requires_grad=True)
-        state_phis = torch.nn.Parameter(state_phis)
+        state_frac_std = 10. * torch.rand(self.n_states, device=self.device, requires_grad=True)
 
-        return state_means, state_phis
+        return state_means.log(), state_frac_std.log()
 
+    @property
+    def parameters_dict(self):
+        """                                                                                                                                                                                                                                                                   
+        Dict with named torch parameters.                                                                                                                                                                                                                                     
+        """
+        return {"state_log_means": self.state_log_means, "state_log_frac_std": self.state_log_frac_std}
+    
     def mask_grad(self):
-        self.state_means.grad *= self.state_grad_mask
-        self.state_phis.grad *= self.state_grad_mask
+        self.state_log_means.grad *= self.state_grad_mask
+        self.state_log_frac_std.grad *= self.state_grad_mask
         return self
     
     def sample(self, states):
         # NB one hot requires int64
         hot_states = F.one_hot(states.to(torch.int64), num_classes=self.n_states).float()
         
-        means = hot_states @ self.state_means
-        phis = hot_states @ self.state_phis
+        means = (hot_states @ self.state_log_means).exp()
+        frac_std = (hot_states @ self.state_log_frac_std).exp()
+
+        var = means + (means * frac_std)**2.
         
+        # NB prob. success
+        ps = means / var
+        
+        # NB number successes
+        rs = means * means / (var - means)
+
+        # NB < number trials >
+        ts = rs / ps        
+        fs = ts - rs
+
         # TODO inefficient                                                                                                                                                                                                                                               
         result = torch.stack(
             [
                 NegativeBinomial(
-                    total_count=means[i],
-                    probs=means[i] / (means[i] + phis[i]),
+                    total_count=fs[i],
+                    probs=ps[i],
                 ).sample()
                 for i in range(len(states))
             ],
             dim=0,
         )
 
+        # NB enforce bookend token
         result[states == 0] = 0.
+        
         return result
 
     def forward(self, obs, states=None):
@@ -100,18 +122,29 @@ class TranscriptEmission(torch.nn.Module):
         
         # NB forward is to be used for training only.
         hot_states = F.one_hot(states.to(torch.int64), num_classes=self.n_states).float()
-        
-        means = hot_states @ self.state_means
-        phis = hot_states @ self.state_phis
 
+        means = (hot_states @ self.state_log_means).exp()
+        frac_std = (hot_states @ self.state_log_frac_std).exp()
+        var = means + (means * frac_std)**2.
+        
+        # NB prob. success
+        ps = means / var
+
+        # NB number successes                                                                                                                                                                                                                                                 
+        rs = means * means / (var - means)
+	
+        # NB < number trials >
+        ts = rs	/ ps
+        fs = ts - rs
+        
         obs = torch.atleast_1d(obs)
         
         # TODO inefficient
         result = torch.stack(
             [
                 NegativeBinomial(
-                    total_count=means[i],
-                    probs=means[i] / (means[i] + phis[i]),
+                    total_count=fs[i],
+                    probs=ps[i],
                 ).log_prob(obs[i])
                 for i in range(len(obs))
             ],
@@ -162,7 +195,8 @@ class TranscriptEmission(torch.nn.Module):
             loss = -self.forward(obvs, states)
             loss.backward()
 
-            self = self.mask_grad()
+            # TODO HACK
+            # self = self.mask_grad()
 
             optimizer.step()
 
@@ -192,24 +226,16 @@ class TranscriptEmission(torch.nn.Module):
         self.device = device
         self.baseline_exp = self.baseline_exp.to(device)
         self.spots_total_transcripts = self.spots_total_transcripts.to(device)
-        self.state_means = self.state_means.to(device)
-        self.state_phis = self.state_phis.to(device)
+        self.state_log_means = self.state_log_means.to(device)
+        self.state_log_frac_std = self.state_log_frac_std.to(device)
         self.state_grad_mask = self.state_grad_mask.to(device)
         
         return self
 
     def validate(self):
         logger.info(
-            f"Negative Binomial emission with means and overdispersion:\n{self.state_means}\n{self.state_phis}\n"
+            f"Negative Binomial emission with log means and log frac. std:\n{self.state_log_means}\n{self.state_log_frac_std}\n"
         )
-
-    @property
-    def parameters_dict(self):
-        """
-        Dict with named torch parameters.
-        """
-        return {"state_means": self.state_means, "state_phis": self.state_phis}
-
 
 if __name__ == "__main__":
     formatter = logging.Formatter(
@@ -239,7 +265,7 @@ if __name__ == "__main__":
     genEmitter = TranscriptEmission(
         K, spots_total_transcripts, baseline_exp, device=device, name="genEmitter"
     )
-    
+
     states = torch.randint(low=1, high=1 + K, size=(n_seq,), device=device)
     states = bookend_sequence(states, device=device)
     
@@ -248,10 +274,10 @@ if __name__ == "__main__":
     modelEmitter = TranscriptEmission(
         K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter"
     )
-
+    
     result = modelEmitter.forward(obvs, states)
 
     if train:
         modelEmitter.torch_training(states, obvs)
-        
+
     logger.info("Done.")
