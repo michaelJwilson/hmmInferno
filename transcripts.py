@@ -46,8 +46,8 @@ class TranscriptEmission(torch.nn.Module):
             total_exp_read_depth=total_exp_read_depth
         )
 
-        self.state_log_means = torch.nn.Parameter(state_log_means)
-        self.state_log_frac_std = torch.nn.Parameter(state_log_frac_std)
+        self.state_log_means = torch.nn.Parameter(state_log_means.requires_grad_(True))
+        self.state_log_frac_std = torch.nn.Parameter(state_log_frac_std.requires_grad_(True))
 
         logger.info(
             f"Initialized {self.name} with log means and log frac. std:\n{self.state_log_means}\n{self.state_log_frac_std}"
@@ -59,14 +59,9 @@ class TranscriptEmission(torch.nn.Module):
         # NB total genomic transcripts per spot, n e (1, .., N).
         self.spots_total_transcripts = spots_total_transcripts
 
-        # NB bookend is not to be optimized.
-        self.state_grad_mask = torch.ones(
-            self.n_states, requires_grad=False, device=self.device
-        )
-        self.state_grad_mask[0] = 0.0
-
         self.bookend = BookendDist(device=self.device)
 
+    @no_grad
     def init_emission(
         self,
         total_exp_read_depth=25,
@@ -83,16 +78,23 @@ class TranscriptEmission(torch.nn.Module):
             + torch.arange(
                 self.n_states - 1,
                 device=self.device,
-                requires_grad=True,
+                requires_grad=False,
                 dtype=torch.float32,
             )
         )
 
         # NB initialise at high precision
-        state_frac_std = state_means.clone()
+        state_frac_std = total_exp_read_depth * (
+            1
+            + torch.arange(
+                self.n_states - 1,
+                device=self.device,
+                requires_grad=False,
+                dtype=torch.float32,
+            )
+        )
 
         state_frac_std = state_frac_std.sqrt() / state_frac_std
-        state_frac_std = state_frac_std.requires_grad_(True)
 
         return state_means.log(), state_frac_std.log()
 
@@ -102,13 +104,12 @@ class TranscriptEmission(torch.nn.Module):
         Dict with named torch parameters.
         """
         return {
-            "state_means": self.state_log_means.clone().exp(),
-            "state_frac_std": self.state_log_frac_std.clone().exp(),
+            "state_log_means": self.state_log_means.clone(),
+            "state_log_frac_std": self.state_log_frac_std.clone(),
         }
 
+    @no_grad
     def mask_grad(self):
-        self.state_log_means.grad *= self.state_grad_mask
-        self.state_log_frac_std.grad *= self.state_grad_mask
         return self
 
     @no_grad
@@ -221,7 +222,7 @@ class TranscriptEmission(torch.nn.Module):
         else:
             return self.forward(obs, state)
 
-    def torch_training(self, states, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
+    def torch_training(self, states, obvs, optimizer=None, n_epochs=300, lr=1.e-1):
         # NB weight_decay=1.0e-5
         optimizer = Adam(self.parameters(), lr=lr)
         
@@ -241,19 +242,18 @@ class TranscriptEmission(torch.nn.Module):
             loss = -self.forward(obvs, states).sum()
             loss.backward()
             
-            # TODO HACK
-            # self = self.mask_grad()
-
+            self = self.mask_grad()
+            """
             # TODO HACK
             with torch.no_grad():
                 self.state_log_means -= lr * self.state_log_means.grad
                 self.state_log_frac_std -= lr * self.state_log_frac_std.grad
-
-            # optimizer.step()
+            """
+            optimizer.step()
             
             if epoch % 10 == 0:
                 logger.info(
-                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} with means: {self.state_log_means.exp()}"
+                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} with log means: {self.state_log_means.detach().cpu().numpy()}"
                 )
 
         # NB evaluation, not training, mode.
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     train = True
 
     # NB K states with N spots, G segments on device.
-    n_seq, K, N, G, device = 25, 8, 100, 25, "cpu"
+    n_seq, K, N, G, device = 250, 8, 100, 25, "cpu"
     total_exp_read_depth = 25
 
     # TODO
