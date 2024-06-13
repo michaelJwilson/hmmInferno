@@ -24,7 +24,6 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-
     def __init__(
         self,
         n_states,
@@ -36,7 +35,7 @@ class TranscriptEmission(torch.nn.Module):
     ):
         super(TranscriptEmission, self).__init__()
 
-        self.n_states = 1 + n_states
+        self.n_states = (1 + n_states)
         self.device = get_device() if device is None else device
         self.name = name
 
@@ -103,6 +102,7 @@ class TranscriptEmission(torch.nn.Module):
         """
         Dict with named torch parameters.
         """
+        # TODO .detach()
         return {
             "state_log_means": self.state_log_means.clone(),
             "state_log_frac_std": self.state_log_frac_std.clone(),
