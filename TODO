@@ -1,10 +1,18 @@
+DONE
 - Train using pyTorch / Adam.
-- Bent Casino simulation.
 - NegativeBinomial emission.
-- Beta Binomial emission.
 - HMM simulation & notebook.
-- Baum Welch training.
-- Cong's nb for data details.
-- Potts.
-- Sampling for Pytorch, hamiltorch
 - logging, useability etc. (last resort).
+
+IN PROGRESS
+- Cong's nb for data details.
+
+TODO
+- Baum Welch training.
+- Normal emission.
+- Beta Binomial emission.
+- Sampling for Pytorch, hamiltorch
+- Potts.
+
+WONT DO
+- Bent Casino simulation.
