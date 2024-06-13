@@ -345,18 +345,16 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_fs = self.log_pi.clone()
+
+        # NB retains bookend obvs.
         ems = self.emission_model.forward(obvs).squeeze(-1)
 
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
             log_fs = torch.logsumexp(interim, dim=0)
-            """
+            
             if not as_prior:
-                log_fs += ems[ii + 1]
-            """
-            print(len(log_fs))
-            print(ems.shape)
-            exit(0)
+                log_fs += ems[:, ii + 1]
 
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
@@ -364,7 +362,7 @@ class HMM(torch.nn.Module):
         return torch.logsumexp(log_fs, dim=0)
 
     @no_grad
-    def log_forward(self, obvs):
+    def log_forward(self, obvs, as_prior=False):
         """
         Log evidence (marginalised over latent) by the forward method,
         returning forward array.
@@ -376,12 +374,18 @@ class HMM(torch.nn.Module):
         log_fs = torch.zeros(len(obvs), self.n_states, device=self.device)
         log_fs[0] = self.log_pi.clone()
 
+        # NB retains bookend obvs.                                                                                                                                                                                                                                             
+        ems = self.emission_model.forward(obvs).squeeze(-1)
+
         for ii, obv in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs[ii])
-
-            # TODO HACK squeeze
-            log_fs[ii + 1] = self.emission_model.forward(obv).squeeze(-1)
-            log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
+            log_fs[ii + 1] = torch.logsumexp(interim, dim=0)
+            
+            if not as_prior:
+                # DEPRECATE                                                                                                                                                                                                                                                   
+                # log_fs[ii + 1] = self.emission_model.forward(obv).squeeze(-1) 
+                
+                log_fs[ii + 1] += ems[:, ii + 1]
 
         # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_transition(None, 0)
@@ -577,6 +581,8 @@ class HMM(torch.nn.Module):
         raise NotImplementedError()
 
     def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
+        torch.autograd.set_detect_anomaly(True)
+        
         # NB weight_decay=1.0e-5
         optimizer = AdamW(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -609,6 +615,8 @@ class HMM(torch.nn.Module):
                 logger.info(
                     f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}"
                 )
+
+            exit(0)
 
         # NB evaluation, not training, mode.
         self.eval()
@@ -713,7 +721,7 @@ if __name__ == "__main__":
 
     logger.info(f"Generated hidden sequence:\n{states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-    """
+
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
@@ -727,7 +735,7 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-    
+    """
     log_like = modelHMM.log_like(obvs, states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
