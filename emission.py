@@ -5,7 +5,7 @@ import torch
 from torch.distributions import Categorical
 
 from dist import BookendDist, NegativeBinomial
-from utils import get_device, get_log_probs_precision, get_scalars, set_scalars
+from utils import get_device, get_log_probs_precision, get_scalars, set_scalars, no_grad
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
 
@@ -116,8 +116,8 @@ class CategoricalEmission(torch.nn.Module):
 
         return self
 
-    @property
-    def parameters_dict(self):
+    @no_grad
+    def get_parameters_dict(self):
         """
         Dict with named torch parameters.
         """

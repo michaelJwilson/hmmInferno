@@ -163,14 +163,18 @@ class MarkovTransition(torch.nn.Module):
     def forward(self, log_vs):
         return log_vs.unsqueeze(-1) + self.log_trans.log_softmax(dim=1)
 
+    def mask_grad(self):
+        self.log_trans.grad *= self.trans_grad_mask
+        return self
+        
     def to_device(self, device):
         self.log_trans.data = self.log_trans.data.to(device)
         self.trans_grad_mask = self.trans_grad_mask.to(device)
 
         return self
 
-    @property
-    def parameters_dict(self):
+    @no_grad
+    def get_parameters_dict(self):
         """Dict with named torch parameters."""
         return {"log_trans": self.log_trans}
 
@@ -336,7 +340,7 @@ class HMM(torch.nn.Module):
 
         return decoded_states
 
-    def log_forward_scan(self, obvs, as_prior=False):
+    def log_forward_scan(self, obvs):
         """
         Log evidence (marginalised over latent) by the forward method.
 
@@ -345,21 +349,21 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_fs = self.log_pi.clone()
+        
+        # TODO HACK
+        # log_fs.requires_grad = False
 
         # NB retains bookend obvs.
         ems = self.emission_model.forward(obvs).squeeze(-1)
-
+        
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
-            log_fs = torch.logsumexp(interim, dim=0)
+            log_fs = ems[:, ii + 1] + torch.logsumexp(interim, dim=0)
             
-            if not as_prior:
-                log_fs += ems[:, ii + 1]
-
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
-
-        return torch.logsumexp(log_fs, dim=0)
+        
+        return log_fs
 
     @no_grad
     def log_forward(self, obvs, as_prior=False):
@@ -580,7 +584,7 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=100, lr=1.0e-2):
         torch.autograd.set_detect_anomaly(True)
         
         # NB weight_decay=1.0e-5
@@ -593,16 +597,18 @@ class HMM(torch.nn.Module):
         #    unnecessaary here, but best practice.
         self.train()
 
-        for key in self.parameters_dict:
+        for key in self.get_parameters_dict():
             logger.info(
-                f"Ready to train {key} parameter with torch, initialised to:\n{self.parameters_dict[key]}"
+                f"Ready to train {key} parameter with torch, initialised to:\n{self.get_parameters_dict()[key]}"
             )
 
         # TODO weight scheduler.
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
-            loss = -self.log_forward_scan(obvs)
+            forward = self.log_forward_scan(obvs)
+            
+            loss = -torch.logsumexp(forward, dim=0)
             loss.backward()
 
             self.transition_model = self.transition_model.mask_grad()
@@ -616,8 +622,6 @@ class HMM(torch.nn.Module):
                     f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}"
                 )
 
-            exit(0)
-
         # NB evaluation, not training, mode.
         self.eval()
 
@@ -627,13 +631,13 @@ class HMM(torch.nn.Module):
 
         self.emission_model.finalize_training()
 
-        for key in self.parameters_dict:
+        for key in self.get_parameters_dict():
             logger.info(
-                f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
+                f"Found optimised parameters for {key} to be:\n{self.get_parameters_dict()[key]}"
             )
 
         logger.info(
-            f"After training with torch for {n_epochs} epochs, found the log evidence to be {self.log_forward_scan(obvs):.4f} by the forward method."
+            f"After training with torch for {n_epochs} epochs, found the log evidence to be {-torch.logsumexp(self.log_forward_scan(obvs), dim=0):.4f} by the forward method."
         )
 
         return n_epochs, self.log_forward_scan(obvs)
@@ -655,12 +659,12 @@ class HMM(torch.nn.Module):
         self.transition_model.validate()
         self.emission_model.validate()
 
-    @property
-    def parameters_dict(self):
+    @no_grad
+    def get_parameters_dict(self):
         """Dict with named torch parameters."""
         # TODO name clash.
         return (
-            self.transition_model.parameters_dict | self.emission_model.parameters_dict
+            self.transition_model.get_parameters_dict() | self.emission_model.get_parameters_dict()
         )
 
     def to_device(self, device):
@@ -689,7 +693,7 @@ if __name__ == "__main__":
     baseline_exp = torch.randn(n_segments, device=device)
 
     # casino = Casino(device=device)
-    # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
     genTranscripts = TranscriptEmission(
         n_states,
         spots_total_transcripts,
@@ -706,10 +710,13 @@ if __name__ == "__main__":
         name="modelTranscripts",
     )
 
+    gen_emission_model = genTranscripts
+    model_emission_model = modelTranscripts
+    
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=n_states,
-        emission_model=genTranscripts,
+        emission_model=categorical,
         transition_model=transition_model,
         device=device,
         name="genHMM",
@@ -725,14 +732,14 @@ if __name__ == "__main__":
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
-        emission_model=modelTranscripts,
+        emission_model=model_emission_model, 
         transition_model=None,
         device=device,
         name="modelHMM",
     )
 
     forward = modelHMM.log_forward_scan(obvs)
-
+    
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
     """
