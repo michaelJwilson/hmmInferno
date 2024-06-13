@@ -349,11 +349,13 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
         
         log_fs = self.log_pi.clone()
+
+        states = torch.arange(self.n_states, dtype=torch.int32, device=self.device)
         
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
-            log_fs = self.emission_model.forward(obs).squeeze(-1) + torch.logsumexp(interim, dim=0)
-
+            log_fs = self.emission_model.forward(obs, states=states).squeeze(-1) + torch.logsumexp(interim, dim=0)
+            
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
 
@@ -378,7 +380,7 @@ class HMM(torch.nn.Module):
             # TODO HACK squeeze
             log_fs[ii + 1] = self.emission_model.forward(obv).squeeze(-1)
             log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
-
+            
         # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_transition(None, 0)
 
@@ -572,10 +574,10 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=300, lr=1.0e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=50, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = Adam(self.parameters(), lr=lr)
-
+        
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
         self.train()
@@ -591,7 +593,7 @@ class HMM(torch.nn.Module):
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
-
+            
             # NB we do not optimise transitions to/from bookend state.
             self.transition_model.log_trans.grad *= (
                 self.transition_model.trans_grad_mask
@@ -679,11 +681,11 @@ if __name__ == "__main__":
     # casino = Casino(device=device)
     # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
     genTranscripts = TranscriptEmission(
-        n_states, spots_total_transcripts, baseline_exp, device=device
+        n_states, spots_total_transcripts, baseline_exp, device=device, name="genTranscripts"
     )
     
     modelTranscripts = TranscriptEmission(
-        n_states, spots_total_transcripts, baseline_exp, device=device
+        n_states, spots_total_transcripts, baseline_exp, device=device, name = "modelTranscripts"
     )
 
     # NB (n_states * n_obvs) action space.

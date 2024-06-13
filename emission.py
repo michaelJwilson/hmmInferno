@@ -15,7 +15,6 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
-
     def __init__(self, n_states, n_obvs, diag=False, device=None):
         super(CategoricalEmission, self).__init__()
 
