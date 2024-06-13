@@ -13,7 +13,7 @@ from utils import (
     bookend_sequence,
     no_grad,
 )
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from dist import BookendDist
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
@@ -50,7 +50,7 @@ class TranscriptEmission(torch.nn.Module):
         logger.info(
             f"Initialized {self.name} with log means and log frac. std:\n{self.state_log_means}\n{self.state_log_frac_std}"
         )
-
+        
         # NB baseline exp. per genomic segment, g e (1, .., G).
         self.baseline_exp = baseline_exp
 
@@ -255,9 +255,10 @@ class TranscriptEmission(torch.nn.Module):
         else:
             return self.forward(obs, state)
 
-    def torch_training(self, states, obvs, optimizer=None, n_epochs=300, lr=1.e-1):
+    def torch_training(self, states, obvs, optimizer=None, n_epochs=3_000, lr=1.e-1):
         # NB weight_decay=1.0e-5
-        optimizer = Adam(self.parameters(), lr=lr)
+        optimizer = AdamW(self.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[350,700], gamma=0.1)
         
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
@@ -272,21 +273,17 @@ class TranscriptEmission(torch.nn.Module):
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
-            loss = -self.forward(obvs, states).sum()
+            forward = self.forward(obvs, states)
+
+            loss = -forward.sum()
             loss.backward()
-            
-            self = self.mask_grad()
-            """
-            # TODO HACK
-            with torch.no_grad():
-                self.state_log_means -= lr * self.state_log_means.grad
-                self.state_log_frac_std -= lr * self.state_log_frac_std.grad
-            """
+
             optimizer.step()
+            scheduler.step()
             
             if epoch % 10 == 0:
                 logger.info(
-                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} with log means: {self.state_log_means.detach().cpu().numpy()}"
+                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} with forward={forward} for log means={self.state_log_means.detach().cpu().numpy()}"
                 )
 
         # NB evaluation, not training, mode.
@@ -315,8 +312,7 @@ class TranscriptEmission(torch.nn.Module):
         self.baseline_exp = self.baseline_exp.to(device)
         self.spots_total_transcripts = self.spots_total_transcripts.to(device)
         self.state_log_means = self.state_log_means.to(device)
-        self.state_log_frac_std = self.state_log_frac_std.to(device)
-
+        self.state_log_frac_std = self.state_log_frac_std.to(device)        
         return self
 
     def validate(self):
@@ -343,7 +339,7 @@ if __name__ == "__main__":
     train = True
 
     # NB K states with N spots, G segments on device.
-    n_seq, K, N, G, device = 6, 4, 100, 25, "cpu"
+    n_seq, K, N, G, device = 600, 4, 100, 25, "cpu"
     total_exp_read_depth = 25
 
     # TODO
@@ -371,17 +367,14 @@ if __name__ == "__main__":
     logger.info(f"Generated observed sequence:\n{obvs}")
 
     modelEmitter = TranscriptEmission(
-        K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter", total_exp_read_depth=100,
+        K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter",
     )
 
     # samples = modelEmitter.sample(states)
     # result = modelEmitter.forward(obvs, None) 
-    result = modelEmitter.forward(obvs, states)
+    # result = modelEmitter.forward(obvs, states)
 
-    print(result)
-    
-    """
     if train:
         modelEmitter.torch_training(states, obvs)
-    """
+    
     logger.info("Done.")

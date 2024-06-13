@@ -6,7 +6,7 @@ import time
 import numpy as np
 import torch
 from torch.distributions import Categorical
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from transition import MarkovTransition
 from emission import CategoricalEmission
 from transcripts import TranscriptEmission
@@ -581,7 +581,7 @@ class HMM(torch.nn.Module):
 
     def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
         # NB weight_decay=1.0e-5
-        optimizer = Adam(self.parameters(), lr=lr)
+        optimizer = AdamW(self.parameters(), lr=lr)
         
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
