@@ -637,7 +637,7 @@ class HMM(torch.nn.Module):
             )
 
         logger.info(
-            f"After training with torch for {n_epochs} epochs, found the log evidence to be {-torch.logsumexp(self.log_forward_scan(obvs), dim=0):.4f} by the forward method."
+            f"After training with torch for {n_epochs} epochs for {len(obvs)} samples, found the log evidence to be {-torch.logsumexp(self.log_forward_scan(obvs), dim=0):.4f} by the forward method."
         )
 
         return n_epochs, self.log_forward_scan(obvs)
@@ -680,7 +680,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 4, 2_000, True, "cpu", True
+    n_states, n_seq, diag, device, train = 4, 3_000, True, "cpu", True
     n_spots, n_segments = 100, 100
 
     start = time.time()
