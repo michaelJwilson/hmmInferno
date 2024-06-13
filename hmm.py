@@ -228,7 +228,7 @@ class HMM(torch.nn.Module):
         # NB should be guranteed to return a torch.Tensor with length > 1
         return self.emission_model.log_emission(state, obs)
 
-    def sample_hidden(self, n_seq, bookend=False):
+    def sample_hidden(self, n_seq, bookend=True):
         last_state = set_scalars(0, device=self.device)
         sequence = [last_state.item()]
 
@@ -250,7 +250,7 @@ class HMM(torch.nn.Module):
 
         return sequence[1:]
 
-    def sample(self, n_seq, hidden=None, bookend=False):
+    def sample(self, n_seq, hidden=None, bookend=True):
         """
         TODO assumes categorical - move to emission.
         """
@@ -259,7 +259,7 @@ class HMM(torch.nn.Module):
 
         if bookend:
             assert hidden[0].item() == hidden[-1].item() == 0
-            
+
         return self.emission_model.sample(hidden)
 
     def log_like(self, obvs, states, bookend=False):
@@ -597,7 +597,7 @@ class HMM(torch.nn.Module):
                 self.transition_model.trans_grad_mask
             )
             
-            # self.emission_model = self.emission_model.mask_grad()
+            self.emission_model = self.emission_model.mask_grad()
 
             optimizer.step()
 
@@ -664,7 +664,7 @@ if __name__ == "__main__":
     torch.manual_seed(314)
 
     # TODO BUG? must be even?
-    n_states, n_seq, diag, device, train = 4, 200, True, "cpu", True
+    n_states, n_seq, diag, device, train = 4, 2_000, True, "cpu", True
     n_spots, n_segments = 100, 100
     
     start = time.time()
@@ -677,18 +677,19 @@ if __name__ == "__main__":
     baseline_exp = torch.randn(n_segments, device=device)
 
     # casino = Casino(device=device)
-    categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
-    transcripts = TranscriptEmission(
+    # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
+    genTranscripts = TranscriptEmission(
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
-
-    emission_model = transcripts
-    emission_model.validate()
+    
+    modelTranscripts = TranscriptEmission(
+        n_states, spots_total_transcripts, baseline_exp, device=device
+    )
 
     # NB (n_states * n_obvs) action space.
     genHMM = HMM(
         n_states=n_states,
-        emission_model=emission_model,
+        emission_model=genTranscripts,
         transition_model=transition_model,
         device=device,
         name="genHMM",
@@ -704,7 +705,7 @@ if __name__ == "__main__":
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
-        emission_model=emission_model,
+        emission_model=modelTranscripts,
         transition_model=None,
         device=device,
         name="modelHMM",
