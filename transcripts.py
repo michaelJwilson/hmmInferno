@@ -84,7 +84,7 @@ class TranscriptEmission(torch.nn.Module):
         )
 
         # NB initialise at high precision
-        state_frac_std = total_exp_read_depth * (
+        state_frac_std = 2 * total_exp_read_depth * (
             1
             + torch.arange(
                 self.n_states - 1,
@@ -107,7 +107,7 @@ class TranscriptEmission(torch.nn.Module):
             "state_log_means": self.state_log_means.clone(),
             "state_log_frac_std": self.state_log_frac_std.clone(),
         }
-
+    
     @no_grad
     def mask_grad(self):
         return self
@@ -127,19 +127,31 @@ class TranscriptEmission(torch.nn.Module):
         means = (hot_states @ self.state_log_means.clone()).exp()
         frac_std = (hot_states @ self.state_log_frac_std.clone()).exp()
 
+        # logger.info(f"Inferred state emission means:\n{means}")
+        
         var = means + (means * frac_std) ** 2.0
 
+        # logger.info(f"Inferred state emission var:\n{var}")
+        
         # NB prob. success
         ps = means / var
 
+        logger.info(f"Inferred prob. of success for {self.name}:\n{ps}")
+        
         # NB number successes
         rs = means * means / (var - means)
 
+        # logger.info(f"Inferred number of successes:\n{rs}")
+        
         # NB < number trials >
         ts = rs / ps
 
+        # logger.info(f"Inferred number of trials:\n{ts}")
+        
         # NB real-valued Polya distribution.
         fs = ts - rs
+
+        # logger.info(f"Inferred number of failures:\n{ts}")
 
         # TODO inefficient
         result = torch.stack(
@@ -180,11 +192,14 @@ class TranscriptEmission(torch.nn.Module):
 
         means = (hot_states @ self.state_log_means).exp()
         frac_std = (hot_states @ self.state_log_frac_std).exp()
+
         var = means + (means * frac_std) ** 2.0
 
         # NB prob. success
         ps = means / var
 
+        assert ps.max().item() <= 1., f"ERROR: invalid probs for means and frac_std:\n{ps}\n{self.state_log_means}\n{self.state_log_frac_std}"
+        
         # NB number successes
         rs = means * means / (var - means)
 
@@ -334,11 +349,12 @@ if __name__ == "__main__":
 
     logger.info(f"Generated hidden sequence:\n{states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-
+    
     modelEmitter = TranscriptEmission(
         K, spots_total_transcripts, baseline_exp, device=device, name="modelEmitter",
     )
-    
+
+    # samples = modelEmitter.sample(states)
     # result = modelEmitter.forward(obvs, None) 
     # result = modelEmitter.forward(obvs, states)
 
