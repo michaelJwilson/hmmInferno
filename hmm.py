@@ -8,7 +8,8 @@ import torch
 from torch.distributions import Categorical
 from torch.optim import Adam
 from transition import MarkovTransition
-from emission import CategoricalEmission, TranscriptEmission
+from emission import CategoricalEmission
+from transcripts import TranscriptEmission
 from utils import (
     bookend_sequence,
     get_device,
@@ -596,7 +597,7 @@ class HMM(torch.nn.Module):
                 self.transition_model.trans_grad_mask
             )
             
-            self.emission_model = self.emission_model.mask_grad()
+            # self.emission_model = self.emission_model.mask_grad()
 
             optimizer.step()
 
@@ -681,7 +682,7 @@ if __name__ == "__main__":
         n_states, spots_total_transcripts, baseline_exp, device=device
     )
 
-    emission_model = categorical
+    emission_model = transcripts
     emission_model.validate()
 
     # NB (n_states * n_obvs) action space.
