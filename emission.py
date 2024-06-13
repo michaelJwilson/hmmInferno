@@ -94,14 +94,13 @@ class CategoricalEmission(torch.nn.Module):
     def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs) bar bookend row.
         return self.log_emission(None, obs).log_softmax(dim=0)
-        
+
     def finalize_training(self):
         self.log_em.data = CategoricalEmission.normalize_emission(
             self.log_em.data
-        )
-        
-        return self
-        
+	)
+	return self
+    
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 

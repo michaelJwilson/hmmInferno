@@ -16,7 +16,6 @@ class TranscriptEmission(torch.nn.Module):
     """
     Emission model for spatial transcripts, with a negative binomial distribution.
     """
-
     def __init__(
         self,
         n_states,
@@ -161,10 +160,6 @@ class TranscriptEmission(torch.nn.Module):
 
         return result
 
-    def finalize_training(self):
-        # NB no finalization steps required
-        return self
-
     def log_emission(self, state, obs):
         """
         Getter for log_em with broadcasting
@@ -226,6 +221,10 @@ class TranscriptEmission(torch.nn.Module):
         )
 
         return n_epochs, loss
+
+    def finalize_training(self):
+        # NB no finalization steps required                                                                                                                                                                           
+        return self
 
     def to_device(self, device):
         self.device = device
