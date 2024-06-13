@@ -6,9 +6,8 @@ def get_log_probs_precision():
 
 
 def get_bookend_token():
-    # NB should be >>> expected transcript count
-    return 999_999_999
-
+    # NB should be >>> expected transcript count, e.g. 999_999_999    
+    return 0 
 
 def get_device():
     # NB mac

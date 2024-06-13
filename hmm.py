@@ -46,10 +46,9 @@ class MarkovTransition(torch.nn.Module):
         self.device = get_device() if device is None else device
 
         # NB we assume a bookend state to transition in/out.
-        self.n_states = 1 + n_states
-
+        self.n_states = (1 + n_states)
         self.log_probs_precision = log_probs_precision
-
+        
         if log_trans is None:
             self.log_trans = MarkovTransition.init_diag_transitions(
                 self.n_states, diag_rate=diag_rate, device=self.device
@@ -196,7 +195,7 @@ class HMM(torch.nn.Module):
         )
 
         # NB we assume a bookend state to transition in/out.
-        self.n_states = 1 + n_states
+        self.n_states = (1 + n_states)
 
         assert (
             self.n_states == emission_model.n_states
@@ -226,7 +225,7 @@ class HMM(torch.nn.Module):
         return self.emission_model.log_emission(state, obs)
 
     def sample_hidden(self, n_seq, bookend=True):
-        last_state = set_scalars(0, device=self.device)
+        last_state = set_scalars(BOOKEND_TOKEN, device=self.device)
         sequence = [last_state.item()]
 
         # TODO avoid bookend intra? samples.
@@ -255,7 +254,7 @@ class HMM(torch.nn.Module):
             hidden = sample_hidden(self, n_seq, bookend=bookend)
 
         if bookend:
-            assert hidden[0].item() == hidden[-1].item() == 0
+            assert hidden[0].item() == hidden[-1].item() == BOOKEND_TOKEN
 
         return self.emission_model.sample(hidden)
 
@@ -264,8 +263,8 @@ class HMM(torch.nn.Module):
         Eqn. (3.6) of Durbin.
         """
         # NB we must start in a bookend state with a bookend obs.
-        assert states[0] == states[-1] == 0
-        assert obvs[0] == obvs[-1] == 0
+        assert states[0] == states[-1] == BOOKEND_TOKEN
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone().unsqueeze(0)
@@ -287,7 +286,7 @@ class HMM(torch.nn.Module):
         See value algebra on pg. 56 of Durbin.
         """
         # NB we must start in a bookend state with a bookend obs.
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         if traced:
             trace_table = torch.zeros(
@@ -343,7 +342,7 @@ class HMM(torch.nn.Module):
 
         See termination step after Eqn. (3.11) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_fs = self.log_pi.clone()
         ems = self.emission_model.forward(obvs).squeeze(-1)
@@ -372,7 +371,7 @@ class HMM(torch.nn.Module):
         See termination step after Eqn. (3.11) of Durbin.
         """
         # NB we must start in a bookend state with a bookend obs.
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_fs = torch.zeros(len(obvs), self.n_states, device=self.device)
         log_fs[0] = self.log_pi.clone()
@@ -396,7 +395,7 @@ class HMM(torch.nn.Module):
 
         See termination step before Eqn. (3.14) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         rev_obvs = torch.flip(obvs, dims=[0])
         log_bs = self.log_transition(None, 0).clone()
@@ -425,7 +424,7 @@ class HMM(torch.nn.Module):
 
         See termination step before Eqn. (3.14) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         rev_obvs = torch.flip(obvs, dims=[0])
 
@@ -456,7 +455,7 @@ class HMM(torch.nn.Module):
         """
         Eqn. (3.14) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         _, log_backward_array = self.log_backward(obvs)
@@ -472,7 +471,7 @@ class HMM(torch.nn.Module):
         """
         Eqn. (3.15) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         # NB no bookend states
         log_state_posterior = self.log_state_posterior(obvs)
@@ -484,7 +483,7 @@ class HMM(torch.nn.Module):
         """
         Eqn. (3.19) of Durbin.
         """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         log_evidence_forward, log_forward_array = self.log_forward(obvs)
         log_evidence_backward, log_backward_array = self.log_backward(obvs)
@@ -508,7 +507,7 @@ class HMM(torch.nn.Module):
     def exp_transition_counts(
         self, obvs, log_transition_posterior=None, pseudo_counts=None
     ):
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         if log_transition_posterior is None:
             # NB only defined for observable states, not bookends.
@@ -525,7 +524,7 @@ class HMM(torch.nn.Module):
     # TODO emission model specific, i.e. assumes Categorical.  Move to Emission class.
     def exp_emission_counts(self, obvs, pseudo_counts=None):
         """ """
-        assert obvs[0] == obvs[-1] == 0
+        assert obvs[0] == obvs[-1] == BOOKEND_TOKEN
 
         if pseudo_counts is None:
             exp_emission_counts = torch.zeros(
@@ -580,7 +579,10 @@ class HMM(torch.nn.Module):
     def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = AdamW(self.parameters(), lr=lr)
-
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[350, 700], gamma=0.1
+        )
+        
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
         self.train()
@@ -601,6 +603,7 @@ class HMM(torch.nn.Module):
             self.emission_model = self.emission_model.mask_grad()
 
             optimizer.step()
+            scheduler.step()
 
             if epoch % 10 == 0:
                 logger.info(
@@ -705,12 +708,12 @@ if __name__ == "__main__":
     )
 
     # NB hidden states matched to observed time steps.
-    hidden_states = genHMM.sample_hidden(n_seq, bookend=True)
-    obvs = genHMM.sample(n_seq, hidden_states)
+    states = genHMM.sample_hidden(n_seq, bookend=True)
+    obvs = genHMM.sample(n_seq, states)
 
-    logger.info(f"Generated hidden sequence:\n{hidden_states}")
+    logger.info(f"Generated hidden sequence:\n{states}")
     logger.info(f"Generated observed sequence:\n{obvs}")
-
+    """
     # NB defaults to a diagonal transition matrix.
     modelHMM = HMM(
         n_states=n_states,
@@ -724,8 +727,8 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-    """
-    log_like = modelHMM.log_like(obvs, hidden_states).item()
+    
+    log_like = modelHMM.log_like(obvs, states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
 
@@ -797,8 +800,8 @@ if __name__ == "__main__":
 
     # NB satisfying! in the case of genHMM != modelHMM, this matches? because .. diag emission?
     assert torch.allclose(
-        hidden_states, posterior_decoded_states
-    ), f"State decoding and truth inconsistent:\n{hidden_states}\n{posterior_decoded_states}."
+        states, posterior_decoded_states
+    ), f"State decoding and truth inconsistent:\n{states}\n{posterior_decoded_states}."
 
 
     log_transition_posteriors = modelHMM.log_transition_posterior(obvs)
