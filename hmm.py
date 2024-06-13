@@ -12,6 +12,7 @@ from emission import CategoricalEmission
 from transcripts import TranscriptEmission
 from utils import (
     bookend_sequence,
+    get_bookend_token
     get_device,
     no_grad,
     get_log_probs_precision,
@@ -21,6 +22,7 @@ from utils import (
 # from rich.logging import RichHandler
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
+BOOKEND_TOKEN = get_bookend_token()
 
 formatter = logging.Formatter(
     "%(asctime)s - %(process)d - %(levelname)s - %(name)s - %(message)s"
@@ -714,6 +716,8 @@ if __name__ == "__main__":
         name="modelHMM",
     )
 
+    forward = modelHMM.log_forward_scan(obvs)
+    
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
     """
