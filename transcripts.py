@@ -101,8 +101,8 @@ class TranscriptEmission(torch.nn.Module):
 
         return state_means.log(), state_frac_std.log()
 
-    @property
-    def parameters_dict(self):
+    @no_grad
+    def get_parameters_dict(self):
         """
         Dict with named torch parameters.
         """
@@ -261,7 +261,9 @@ class TranscriptEmission(torch.nn.Module):
         else:
             return self.forward(obs, state)
 
-    def torch_training(self, states, obvs, optimizer=None, n_epochs=3_000, lr=1.0e-1):
+    def torch_training(self, states, obvs, optimizer=None, n_epochs=50, lr=1.0e-1):
+        torch.autograd.set_detect_anomaly(True)
+        
         # NB weight_decay=1.0e-5
         optimizer = AdamW(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -272,9 +274,9 @@ class TranscriptEmission(torch.nn.Module):
         #    unnecessaary here, but best practice.
         self.train()
 
-        for key in self.parameters_dict:
+        for key in self.get_parameters_dict():
             logger.info(
-                f"Ready to train {key} parameter with torch, initialised to:\n{self.parameters_dict[key]}"
+                f"Ready to train {key} parameter with torch, initialised to:\n{self.get_parameters_dict()[key]}"
             )
 
         # TODO weight scheduler.
@@ -291,7 +293,7 @@ class TranscriptEmission(torch.nn.Module):
 
             if epoch % 10 == 0:
                 logger.info(
-                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} with forward={forward} for log means={self.state_log_means.detach().cpu().numpy()}"
+                    f"Torch training epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f} for log means={self.state_log_means.detach().cpu().numpy()} and log frac stds={self.state_log_frac_std.detach().cpu().numpy()}"
                 )
 
         # NB evaluation, not training, mode.
@@ -300,9 +302,9 @@ class TranscriptEmission(torch.nn.Module):
 
         loss = -self.forward(obvs, states).sum()
 
-        for key in self.parameters_dict:
+        for key in self.get_parameters_dict():
             logger.info(
-                f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
+                f"Found optimised parameters for {key} to be:\n{self.get_parameters_dict()[key]}"
             )
 
         logger.info(
