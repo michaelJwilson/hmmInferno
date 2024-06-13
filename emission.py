@@ -3,7 +3,7 @@ import torch
 import logging
 from torch.distributions import Categorical
 from utils import get_device, get_log_probs_precision, get_scalars, set_scalars
-from dist import NegativeBinomial
+from dist import NegativeBinomial, BookendDist
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
 
@@ -99,7 +99,7 @@ class CategoricalEmission(torch.nn.Module):
         self.log_em.data = CategoricalEmission.normalize_emission(
             self.log_em.data
 	)
-	return self
+        return self
     
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
@@ -117,18 +117,3 @@ class CategoricalEmission(torch.nn.Module):
         Dict with named torch parameters.
         """
         return {"log_em": self.log_em}
-
-class BookendDist:
-    def __init__(self, device=None):
-        self.device = get_device() if device is None else get_device()
-        
-    def sample(self):
-        return set_scalars(0, device=self.device)
-
-    def log_prob(self, obs):
-        if obs.dim() > 0:
-            result = torch.zeros(len(obs), dtype=torch.int32, device=self.device)
-            result[obs > 0] = LOG_PROBS_PRECISION
-            return result
-        else:
-            return set_scalars(0, device=self.device)

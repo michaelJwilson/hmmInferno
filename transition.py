@@ -15,6 +15,7 @@ class MarkovTransition(torch.nn.Module):
         device=None,
         diag_rate=0.95,
         log_probs_precision=LOG_PROBS_PRECISION,
+        fixed=True,
     ):
         super(MarkovTransition, self).__init__()
 
@@ -44,7 +45,8 @@ class MarkovTransition(torch.nn.Module):
                 log_trans, log_probs_precision=log_probs_precision
             )
 
-        self.log_trans = torch.nn.Parameter(self.log_trans)
+        if not fixed:
+            self.log_trans = torch.nn.Parameter(self.log_trans)
 
         # NB transitions to/from bookend state should not be trained.
         self.trans_grad_mask = torch.ones(
@@ -52,6 +54,7 @@ class MarkovTransition(torch.nn.Module):
             requires_grad=False,
             device=self.device,
         )
+        
         self.trans_grad_mask[0, :] = 0
         self.trans_grad_mask[:, 0] = 0
 
@@ -137,6 +140,12 @@ class MarkovTransition(torch.nn.Module):
     def forward(self, log_vs):
         return log_vs.unsqueeze(-1) + self.log_trans.log_softmax(dim=1)
 
+    def mask_grad(self):
+        # NB we do not optimise transitions to/from bookend state.                                                                                                  
+        self.log_trans.grad *= self.trans_grad_mask
+        return self
+        
+        
     def to_device(self, device):
         self.log_trans.data = self.log_trans.data.to(device)
         self.trans_grad_mask = self.trans_grad_mask.to(device)

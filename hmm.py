@@ -217,7 +217,6 @@ class HMM(torch.nn.Module):
         self.emission_model = emission_model
 
         self.to_device(device)
-
         self.validate()
 
     def log_transition(self, state, second_state):
@@ -340,7 +339,7 @@ class HMM(torch.nn.Module):
 
         return decoded_states
 
-    def log_forward_scan(self, obvs):
+    def log_forward_scan(self, obvs, as_prior=False):
         """
         Log evidence (marginalised over latent) by the forward method.
 
@@ -354,7 +353,10 @@ class HMM(torch.nn.Module):
         
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
-            log_fs = self.emission_model.forward(obs, states=states).squeeze(-1) + torch.logsumexp(interim, dim=0)
+            log_fs = torch.logsumexp(interim, dim=0)
+
+            if not as_prior:
+                log_fs += self.emission_model.forward(obs, states=states).squeeze(-1)
             
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
@@ -593,12 +595,8 @@ class HMM(torch.nn.Module):
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
-            
-            # NB we do not optimise transitions to/from bookend state.
-            self.transition_model.log_trans.grad *= (
-                self.transition_model.trans_grad_mask
-            )
-            
+
+            self.transition_model = self.transition_model.mask_grad()            
             self.emission_model = self.emission_model.mask_grad()
 
             optimizer.step()
