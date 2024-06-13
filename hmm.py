@@ -7,18 +7,13 @@ import numpy as np
 import torch
 from torch.distributions import Categorical
 from torch.optim import Adam, AdamW
-from transition import MarkovTransition
+
 from emission import CategoricalEmission
 from transcripts import TranscriptEmission
-from utils import (
-    bookend_sequence,
-    get_bookend_token
-    get_device,
-    no_grad,
-    get_log_probs_precision,
-    get_log_probs_precision,
-    set_scalars
-)
+from transition import MarkovTransition
+from utils import (bookend_sequence, get_bookend_token, get_device,
+                   get_log_probs_precision, no_grad, set_scalars)
+
 # from rich.logging import RichHandler
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
@@ -35,6 +30,7 @@ handler.setFormatter(formatter)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
+
 
 class MarkovTransition(torch.nn.Module):
     def __init__(
@@ -274,13 +270,13 @@ class HMM(torch.nn.Module):
         # NB we start in the bookend state with unit probability.
         log_like = self.log_pi[0].clone().unsqueeze(0)
         last_state = states[0].clone()
-        
+
         for obs, state in zip(obvs[1:-1], states[1:-1]):
             log_like += self.log_transition(last_state, state)
             log_like += self.log_emission(state, obs)
-                
+
             last_state = state
-            
+
         return log_like
 
     def viterbi(self, obvs, traced=False):
@@ -302,7 +298,7 @@ class HMM(torch.nn.Module):
         # NB relies on transition from 0 to any state to be equal.
         log_vs = self.log_pi.clone()
 
-        for ii, obs in enumerate(obvs[1:]):            
+        for ii, obs in enumerate(obvs[1:]):
             interim = self.transition_model.forward(log_vs)
 
             log_vs, max_states = torch.max(interim, dim=0)
@@ -348,7 +344,7 @@ class HMM(torch.nn.Module):
         See termination step after Eqn. (3.11) of Durbin.
         """
         assert obvs[0] == obvs[-1] == 0
-        
+
         log_fs = self.log_pi.clone()
         ems = self.emission_model.forward(obvs).squeeze(-1)
 
@@ -362,7 +358,7 @@ class HMM(torch.nn.Module):
             print(len(log_fs))
             print(ems.shape)
             exit(0)
-            
+
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
 
@@ -387,7 +383,7 @@ class HMM(torch.nn.Module):
             # TODO HACK squeeze
             log_fs[ii + 1] = self.emission_model.forward(obv).squeeze(-1)
             log_fs[ii + 1] += torch.logsumexp(interim, dim=0)
-            
+
         # NB final transition into the book end state.
         log_fs[-1] = log_fs[-2] + self.log_transition(None, 0)
 
@@ -404,19 +400,19 @@ class HMM(torch.nn.Module):
 
         rev_obvs = torch.flip(obvs, dims=[0])
         log_bs = self.log_transition(None, 0).clone()
-        
+
         # NB no bookend states.
-        for ii, obv in enumerate(rev_obvs[1:-2]):            
-            interim = log_bs.unsqueeze(0) + self.log_transition(None, None)            
+        for ii, obv in enumerate(rev_obvs[1:-2]):
+            interim = log_bs.unsqueeze(0) + self.log_transition(None, None)
             interim += self.emission_model.forward(obv)
 
             log_bs = torch.logsumexp(interim, dim=1)
-            
+
         log_bs += self.log_transition(0, None)
 
         # TODO HACK squeeze.
         log_bs += self.log_emission(None, rev_obvs[-2]).squeeze(-1)
-        
+
         log_evidence = torch.logsumexp(log_bs, dim=0)
 
         return log_evidence
@@ -440,7 +436,7 @@ class HMM(torch.nn.Module):
             interim = log_bs[ii, :].unsqueeze(0) + self.log_transition(None, None)
 
             # TODO HACK squeeze
-            interim += self.emission_model.forward(obv) # .unsqueeze(0)
+            interim += self.emission_model.forward(obv)  # .unsqueeze(0)
 
             log_bs[ii + 1] = torch.logsumexp(interim, dim=1)
 
@@ -584,7 +580,7 @@ class HMM(torch.nn.Module):
     def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = AdamW(self.parameters(), lr=lr)
-        
+
         # NB set model to training mode - important for batch normalization & dropout -
         #    unnecessaary here, but best practice.
         self.train()
@@ -594,14 +590,14 @@ class HMM(torch.nn.Module):
                 f"Ready to train {key} parameter with torch, initialised to:\n{self.parameters_dict[key]}"
             )
 
-        # TODO weight scheduler.            
+        # TODO weight scheduler.
         for epoch in range(n_epochs):
             optimizer.zero_grad()
 
             loss = -self.log_forward_scan(obvs)
             loss.backward()
 
-            self.transition_model = self.transition_model.mask_grad()            
+            self.transition_model = self.transition_model.mask_grad()
             self.emission_model = self.emission_model.mask_grad()
 
             optimizer.step()
@@ -617,9 +613,9 @@ class HMM(torch.nn.Module):
         self.transition_model.log_trans.data = MarkovTransition.normalize_transitions(
             self.transition_model.log_trans.data
         )
-        
+
         self.emission_model.finalize_training()
-        
+
         for key in self.parameters_dict:
             logger.info(
                 f"Found optimised parameters for {key} to be:\n{self.parameters_dict[key]}"
@@ -663,7 +659,7 @@ class HMM(torch.nn.Module):
 
         return self
 
-    
+
 if __name__ == "__main__":
     # TODO set seed for cuda / mps
     torch.manual_seed(314)
@@ -671,7 +667,7 @@ if __name__ == "__main__":
     # TODO BUG? must be even?
     n_states, n_seq, diag, device, train = 4, 2_000, True, "cpu", True
     n_spots, n_segments = 100, 100
-    
+
     start = time.time()
 
     transition_model = MarkovTransition(n_states=n_states, diag_rate=0.5, device=device)
@@ -684,11 +680,19 @@ if __name__ == "__main__":
     # casino = Casino(device=device)
     # categorical = CategoricalEmission(n_states=n_states, diag=diag, n_obvs=n_states, device=device)
     genTranscripts = TranscriptEmission(
-        n_states, spots_total_transcripts, baseline_exp, device=device, name="genTranscripts"
+        n_states,
+        spots_total_transcripts,
+        baseline_exp,
+        device=device,
+        name="genTranscripts",
     )
-    
+
     modelTranscripts = TranscriptEmission(
-        n_states, spots_total_transcripts, baseline_exp, device=device, name = "modelTranscripts"
+        n_states,
+        spots_total_transcripts,
+        baseline_exp,
+        device=device,
+        name="modelTranscripts",
     )
 
     # NB (n_states * n_obvs) action space.
@@ -717,7 +721,7 @@ if __name__ == "__main__":
     )
 
     forward = modelHMM.log_forward_scan(obvs)
-    
+
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
     """

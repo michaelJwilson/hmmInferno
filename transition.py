@@ -1,11 +1,14 @@
-import torch
 import logging
+
 import numpy as np
+import torch
+
 from utils import get_device, get_log_probs_precision
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
 
 logger = logging.getLogger(__name__)
+
 
 class MarkovTransition(torch.nn.Module):
     def __init__(
@@ -54,7 +57,7 @@ class MarkovTransition(torch.nn.Module):
             requires_grad=False,
             device=self.device,
         )
-        
+
         self.trans_grad_mask[0, :] = 0
         self.trans_grad_mask[:, 0] = 0
 
@@ -127,7 +130,8 @@ class MarkovTransition(torch.nn.Module):
         # NB reconstruct the first row disrupted by softmax.
         log_trans[0, 0] = torch.tensor(log_probs_precision, device=device)
         log_trans[0, 1:] = torch.tensor(
-            (1.0 - torch.tensor([log_probs_precision]).exp()) / len(log_trans[0, 1:]), device=device
+            (1.0 - torch.tensor([log_probs_precision]).exp()) / len(log_trans[0, 1:]),
+            device=device,
         ).log()
 
         return log_trans
@@ -141,11 +145,10 @@ class MarkovTransition(torch.nn.Module):
         return log_vs.unsqueeze(-1) + self.log_trans.log_softmax(dim=1)
 
     def mask_grad(self):
-        # NB we do not optimise transitions to/from bookend state.                                                                                                  
+        # NB we do not optimise transitions to/from bookend state.
         self.log_trans.grad *= self.trans_grad_mask
         return self
-        
-        
+
     def to_device(self, device):
         self.log_trans.data = self.log_trans.data.to(device)
         self.trans_grad_mask = self.trans_grad_mask.to(device)

@@ -1,8 +1,10 @@
 import torch
 from torch.distributions import negative_binomial
-from utils import set_scalars, get_device, get_bookend_token
+
+from utils import get_bookend_token, get_device, set_scalars
 
 BOOKEND_TOKEN = get_bookend_token()
+
 
 class NegativeBinomial:
     """

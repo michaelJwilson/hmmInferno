@@ -1,9 +1,11 @@
-import sys
-import torch
 import logging
+import sys
+
+import torch
 from torch.distributions import Categorical
+
+from dist import BookendDist, NegativeBinomial
 from utils import get_device, get_log_probs_precision, get_scalars, set_scalars
-from dist import NegativeBinomial, BookendDist
 
 LOG_PROBS_PRECISION = get_log_probs_precision()
 
@@ -15,6 +17,7 @@ class CategoricalEmission(torch.nn.Module):
     Categoical emission from a bookend + n_states hidden states, (0, 1, .., n_states),
     to n_obvs emission classes.
     """
+
     def __init__(self, n_states, n_obvs, diag=False, device=None):
         super(CategoricalEmission, self).__init__()
 
@@ -44,12 +47,16 @@ class CategoricalEmission(torch.nn.Module):
         # NB simple Markov model, where the hidden state is emitted.
         if diag:
             log_em = (
-                torch.eye(self.n_states, self.n_obvs, device=self.device, requires_grad=True)
+                torch.eye(
+                    self.n_states, self.n_obvs, device=self.device, requires_grad=True
+                )
                 .log()
                 .clip(min=log_probs_precision, max=-log_probs_precision)
             )
         else:
-            log_em = torch.randn(self.n_states, self.n_obvs, device=self.device, requires_grad=True)
+            log_em = torch.randn(
+                self.n_states, self.n_obvs, device=self.device, requires_grad=True
+            )
 
         # NB nn.Parameter marks this to be optimised via torch.
         log_em = torch.nn.Parameter(log_em)
@@ -84,23 +91,21 @@ class CategoricalEmission(torch.nn.Module):
 
     def sample(self, state):
         probs = [self.log_emission(ss, None).exp() for ss in get_scalars(state)]
-        result = [Categorical(pp).sample() for pp in probs]        
+        result = [Categorical(pp).sample() for pp in probs]
         return torch.tensor(result, dtype=torch.int32, device=self.device)
 
     def mask_grad(self):
         self.log_em.grad *= self.log_em_grad_mask
         return self
-    
+
     def forward(self, obs):
         # NB equivalent to normalized self.emission(None, obs) bar bookend row.
         return self.log_emission(None, obs).log_softmax(dim=0)
 
     def finalize_training(self):
-        self.log_em.data = CategoricalEmission.normalize_emission(
-            self.log_em.data
-	)
+        self.log_em.data = CategoricalEmission.normalize_emission(self.log_em.data)
         return self
-    
+
     def validate(self):
         logger.info(f"Emission log probability matrix:\n{self.log_em}\n")
 
