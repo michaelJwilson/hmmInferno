@@ -574,7 +574,7 @@ class HMM(torch.nn.Module):
     def baum_welch_training(self):
         raise NotImplementedError()
 
-    def torch_training(self, obvs, optimizer=None, n_epochs=50, lr=1.0e-2):
+    def torch_training(self, obvs, optimizer=None, n_epochs=10, lr=1.0e-2):
         # NB weight_decay=1.0e-5
         optimizer = Adam(self.parameters(), lr=lr)
         
@@ -715,7 +715,7 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-    """
+
     log_like = modelHMM.log_like(obvs, hidden_states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
@@ -821,5 +821,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-    """
+
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")
