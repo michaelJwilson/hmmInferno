@@ -13,15 +13,15 @@ def get_device():
     return device
 
 
-def bookend_sequence(sequence, device=None):
+def bookend_sequence(sequence, device=None, dtype=torch.int32):
     """
     Bookend a sequence with the 0-state.
     """
     return torch.cat(
         (
-            torch.tensor([0], dtype=torch.int32, device=device),
+            torch.tensor([0], dtype=dtype, device=device),
             sequence,
-            torch.tensor([0], dtype=torch.int32, device=device),
+            torch.tensor([0], dtype=dtype, device=device),
         ),
         dim=0,
     )

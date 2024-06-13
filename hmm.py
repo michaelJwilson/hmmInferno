@@ -348,15 +348,17 @@ class HMM(torch.nn.Module):
         assert obvs[0] == obvs[-1] == 0
         
         log_fs = self.log_pi.clone()
-
-        states = torch.arange(self.n_states, dtype=torch.int32, device=self.device)
         
         for ii, obs in enumerate(obvs[1:-1]):
             interim = self.transition_model.forward(log_fs)
             log_fs = torch.logsumexp(interim, dim=0)
-
+            """
             if not as_prior:
-                log_fs += self.emission_model.forward(obs, states=states).squeeze(-1)
+                log_fs += self.emission_model.forward(obs, drop_bookends=False).squeeze(-1)
+            """
+            print(len(log_fs))
+            print(self.emission_model.forward(obs, drop_bookends=False).squeeze(-1))
+            exit(0)
             
         # NB final transition into the book end state; note coefficient is not trained.
         log_fs += self.log_transition(None, 0)
@@ -713,7 +715,7 @@ if __name__ == "__main__":
 
     if train:
         torch_n_epochs, torch_log_evidence_forward = modelHMM.torch_training(obvs)
-
+    """
     log_like = modelHMM.log_like(obvs, hidden_states).item()
 
     logger.info(f"Found a log likelihood= {log_like:.4f} for generated hidden states")
@@ -819,5 +821,5 @@ if __name__ == "__main__":
     )
 
     logger.info(f"Found the emissions Baum-Welch update to be:\n{baum_welch_emissions}")
-
+    """
     logger.info(f"Done (in {time.time() - start:.1f}s).\n\n")

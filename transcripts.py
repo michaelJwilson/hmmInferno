@@ -169,13 +169,13 @@ class TranscriptEmission(torch.nn.Module):
 
         return torch.cat((bookend, result, bookend))
 
-    def forward(self, obs, states=None):
+    def forward(self, obs, states=None, drop_bookends=True):
         obs = torch.atleast_1d(obs.clone())
 
-        # NB expect bookends
-        assert obs[0] == obs[-1] == 0
-
-        obs = obs[1:-1]
+        if drop_bookends:
+            # NB expect bookends
+            assert obs[0] == obs[-1] == 0            
+            obs = obs[1:-1]
 
         if states is None:
             states = torch.arange(
@@ -208,7 +208,7 @@ class TranscriptEmission(torch.nn.Module):
 
         # NB < number fails >
         fs = ts - rs
-
+        
         if len(states) != len(obs):
             result = [
                 NegativeBinomial(total_count=fs[ii], probs=ps[ii]).log_prob(obs)
@@ -298,7 +298,6 @@ class TranscriptEmission(torch.nn.Module):
         self.spots_total_transcripts = self.spots_total_transcripts.to(device)
         self.state_log_means = self.state_log_means.to(device)
         self.state_log_frac_std = self.state_log_frac_std.to(device)
-        self.state_grad_mask = self.state_grad_mask.to(device)
 
         return self
 
