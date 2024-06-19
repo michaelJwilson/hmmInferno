@@ -1,4 +1,5 @@
 import numba
+import scipy
 import numpy as np
 import pylab as pl
 import scipy.stats as stats
@@ -6,29 +7,87 @@ import statsmodels.api as sm
 from numpy import vectorize
 from numba import njit
 from scipy.optimize import root_scalar
+from statsmodels.base.model import GenericLikelihoodModel
+from calicost.utils_distribution_fitting import (
+    Weighted_NegativeBinomial,
+    convert_params,
+)
 
 """                                                                                                                                                                  
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
 """
 
-# np.random.seed(420)
+np.random.seed(420)
+
+
+class Weighted_NegativeBinomial2(GenericLikelihoodModel):
+    """
+    Negative Binomial model endog ~ NB(exposure * exp(exog @ params[:-1]), params[-1]), where exog is the design matrix, and params[-1] is 1 / overdispersion.
+    This function fits the NB params when samples are weighted by weights: max_{params} \sum_{s} weights_s * log P(endog_s | exog_s; params)
+
+    Attributes
+    ----------
+    endog : array, (n_samples,)
+        Y values.
+
+    exog : array, (n_samples, n_features)
+        Design matrix.
+
+    weights : array, (n_samples,)
+        Sample weights.
+
+    exposure : array, (n_samples,)
+        Multiplication constant outside the exponential term. In scRNA-seq or SRT data, this term is the total UMI count per cell/spot.
+    """
+
+    def __init__(self, endog, exog, weights, exposure, seed=0, **kwds):
+        super(Weighted_NegativeBinomial2, self).__init__(endog, exog, **kwds)
+
+        self.weights = weights
+        self.exposure = exposure
+        self.seed = seed
+
+    def nloglikeobs(self, params):
+        # NB params == (mus, overdispersion)
+        nb_mean = np.exp(self.exog @ params[:-1]) * self.exposure
+        nb_std = np.sqrt(nb_mean + params[-1] * nb_mean**2)
+
+        n, p = convert_params(nb_mean, nb_std)
+        llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
+        return -llf.dot(self.weights)
+
+    def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
+        self.exog_names.append("alpha")
+
+        if start_params is None:
+            if hasattr(self, "start_params"):
+                start_params = self.start_params
+            else:
+                start_params = np.append(0.1 * np.ones(self.nparams), 0.01)
+
+        return super(Weighted_NegativeBinomial2, self).fit(
+            start_params=start_params, maxiter=maxiter, maxfun=maxfun, **kwds
+        )
+
 
 def nu_sum_log_core(alpha, yi_max):
     result = np.zeros(yi_max)
 
     for nu in range(0, yi_max):
-        result[nu] = np.log(1. + alpha * nu)
+        result[nu] = np.log(1.0 + alpha * nu)
 
-    return result
+    return np.cumsum(result)
+
 
 # @njit
 def nu_sum_core(alpha, yi_max):
     result = np.zeros(yi_max)
 
     for nu in range(0, yi_max):
-        result[nu] = nu / (1. + alpha * nu)
+        result[nu] = nu / (1.0 + alpha * nu)
 
-    return result
+    return np.cumsum(result)
+
 
 def log_like(samples, alpha, mu):
     nn = len(samples)
@@ -45,62 +104,97 @@ def log_like(samples, alpha, mu):
     nu_sums = nu_sums_complete[idx]
 
     result = (cnts * nu_sums).sum() / nn
-    result += mean * np.log(mu)
-    result -= (mean + 1. / alpha)*np.log(1. + alpha * mu)
+
+    # TODO HACK
+    result = mean * np.log(mu)
+    result -= (mean + 1.0 / alpha) * np.log(1.0 + alpha * mu)
 
     return result
-        
-def dispersion_minimas(samples, max_factor=10_000.):
+
+
+def dispersion_func(samples):
     nn = len(samples)
     yis, cnts = np.unique(samples, return_counts=True)
     mean = (yis * cnts).sum() / nn
-    std = np.std(yis)
-    
+    std = np.std(samples)
+
     max_yi = yis.max()
     zeros = np.zeros_like(yis)
 
     mu = mean
     idx = np.maximum(zeros, (yis - 1)).tolist()
-    
+
     def grad_func(alpha):
         nu_sums_complete = nu_sum_core(alpha, max_yi)
         nu_sums = nu_sums_complete[idx]
-        
+
         result = (cnts * nu_sums).sum() / nn
-        result += np.log(1. + alpha * mu) / alpha / alpha
-        result -= mu * (mean + 1. / alpha) / (1. + alpha * mu)
-        
+        result += np.log(1.0 + alpha * mu) / alpha / alpha
+        result -= mu * (mean + 1.0 / alpha) / (1.0 + alpha * mu)
+
         return result
 
-    # bracket=[1.e-6, 10. * std],
-    # root_scalar(grad_func, method="newton", x0=1.)
     return grad_func
-    
-    
-# Parameters for the negative binomial distribution
-mu, var, size = 10, 25., 10  # num. successes, prob. success., num_samples.
 
-p = mu / var
-r = mu * mu / (var - mu)
 
-# print(p, r)
+def dispersion_minimas(samples):
+    dalpha = 1.0e-2
+    bracket = [dalpha, 10.0 * np.std(samples)]
 
-alpha = (var - mu) / mu / mu
+    grad_func = dispersion_func(samples)
+    return root_scalar(grad_func, bracket=bracket)
 
-# Sample from the negative binomial distribution
-samples = stats.nbinom.rvs(r, p, size=size)
 
-"""
-grad_func = dispersion_minimas(samples)
+if __name__ == "__main__":
+    mu, var, size = 10, 25.0, 200  # num. successes, prob. success., num_samples.
+    alpha = (var - mu) / mu / mu
 
-alphas = 1.e-6 + np.arange(-10., 20., 0.2)
-result = vectorize(grad_func)(alphas)
+    title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
 
-pl.plot(alphas, result)
-pl.show()
-"""
+    p = mu / var
+    r = (mu * mu) / (var - mu)
 
-like = np.exp(log_like(samples, alpha, mu))
+    assert (r, p) == convert_params(mu, np.sqrt(var))
 
-print(like)
-print(np.exp(np.sum(stats.nbinom.logpmf(samples, r, p))))
+    # print(p, r)
+    # print(convert_params(mu, np.sqrt(var)))
+
+    # Sample from the negative binomial distribution
+    samples = stats.nbinom.rvs(r, p, size=size)
+
+    grad_func = dispersion_func(samples)
+
+    dalpha = 1.0e-2
+    alphas = dalpha + np.arange(0.0, 20.0, dalpha)
+
+    result = vectorize(grad_func)(alphas)
+
+    minima = dispersion_minimas(samples)
+    est_alpha, est_mu = minima.root, samples.mean()
+
+    pl.plot(alphas, result)
+    pl.axhline(0.0, c="k", lw=0.5, label=r"$\hat \mu=$" + f"{est_mu:.4f}")
+    pl.axvline(est_alpha, c="k", lw=0.5, label=r"$\hat \alpha=$" + f"{est_alpha:.4f}")
+    pl.legend(frameon=False)
+    pl.title(title)
+    # pl.show()
+
+    fitter = Weighted_NegativeBinomial2(
+        endog=samples,
+        exog=np.diag(np.ones_like(samples)),
+        weights=np.ones_like(samples),
+        exposure=np.ones_like(samples),
+    )
+
+    params = mu + np.sqrt(var) * np.random.normal(size=len(samples))
+    params = np.concatenate((params, np.array([alpha])))
+
+    log_like = fitter.nloglikeobs(params)
+
+    # NB disp controls output.
+    result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+
+    print(mu, alpha)
+    print(est_mu, est_alpha)
+    print(result.params[:-1].mean(), result.params[-1])
+    print("Done.")
