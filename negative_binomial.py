@@ -9,8 +9,10 @@ import scipy
 import timeit
 import scipy.stats as stats
 import statsmodels.api as sm
-from calicost.utils_distribution_fitting import (Weighted_NegativeBinomial,
-                                                 convert_params)
+from calicost.utils_distribution_fitting import (
+    Weighted_NegativeBinomial,
+    convert_params,
+)
 from numba import config, njit, prange, threading_layer
 from numpy import vectorize
 from scipy.optimize import root_scalar
@@ -23,7 +25,7 @@ https://www.jstor.org/stable/2532104?seq=2
 # set the threading layer before any parallel target compilation
 config.THREADING_LAYER = "threadsafe"
 
-np.random.seed(420)
+np.random.seed(314)
 
 
 class ProfileContext:
@@ -78,9 +80,11 @@ class Weighted_NegativeBinomial_Piegorsch(GenericLikelihoodModel):
         # NB params == (mus, overdispersion)
         nb_mean = np.exp(self.exog @ params[:-1]) * self.exposure
         nb_std = np.sqrt(nb_mean + params[-1] * nb_mean**2)
-
+        
         n, p = convert_params(nb_mean, nb_std)
+        
         llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
+        
         return -llf.dot(self.weights)
 
     def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
@@ -98,7 +102,7 @@ class Weighted_NegativeBinomial_Piegorsch(GenericLikelihoodModel):
         )
 
 
-@njit(cache=True, parallel=True, nopython=True)
+@njit(cache=True, parallel=True)
 def nu_sum_log_core(alpha, yi_max):
     result = np.zeros(yi_max)
 
@@ -175,7 +179,7 @@ def dispersion_minimas(samples):
 
 if __name__ == "__main__":
     # NB num. successes, prob. success., num_samples.
-    mu, var, size = 10, 25.0, 400
+    mu, var, size, nrepeat = 10, 25.0, 2_000, 10
     alpha = (var - mu) / mu / mu
 
     print(mu, alpha)
@@ -188,14 +192,15 @@ if __name__ == "__main__":
 
     dalpha = 1.0e-2
     alphas = dalpha + np.arange(0.0, 20.0, dalpha)
-
+    """
     with ProfileContext() as context:
-        for ii in range(1_000):
+        for ii in range(nrepeat):
             minima = dispersion_minimas(samples)
 
         est_alpha, est_mu = minima.root, mean
+        
         print(est_mu, est_alpha)
-
+    """
     # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
     #
     # pl.plot(alphas, vectorize(grad_func)(alphas))
@@ -204,29 +209,34 @@ if __name__ == "__main__":
     # pl.legend(frameon=False)
     # pl.title(title)
     # pl.show()
+
+    # NB
+    num_states = 1
+
+    exog = np.zeros((len(samples), num_states))
+    exog[:, 0] = 1.0
     
     fitter = Weighted_NegativeBinomial_Piegorsch(
         endog=samples,
-        exog=np.diag(np.ones_like(samples)),
+        exog=exog,
         weights=np.ones_like(samples),
         exposure=np.ones_like(samples),
     )
 
-    # NB
-    num_states = 10
-    
     params = mu + np.sqrt(var) * np.random.normal(size=num_states)
     params = np.concatenate((params, np.array([alpha])))
 
-    log_like = fitter.nloglikeobs(params)
-
-    print(log_like)
+    print(params)
     
-    """
+    # log_like = fitter.nloglikeobs(params)
+    
     with ProfileContext() as context:
-        # NB disp controls output.
-        result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+        for ii in range(nrepeat):            
+            # NB disp controls output.
+            result = fitter.fit(
+                start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4
+            )
 
-        print(result.params[:-1].mean(), result.params[-1])
-    """
+            print(result.params)
+    
     print("\n\nDone.\n\n")
