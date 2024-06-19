@@ -175,7 +175,7 @@ def dispersion_minimas(samples):
 
 if __name__ == "__main__":
     # NB num. successes, prob. success., num_samples.
-    mu, var, size = 10, 25.0, 200
+    mu, var, size = 10, 25.0, 400
     alpha = (var - mu) / mu / mu
 
     print(mu, alpha)
@@ -218,9 +218,8 @@ if __name__ == "__main__":
     # log_like = fitter.nloglikeobs(params)
 
     with ProfileContext() as context:
-        for ii in range(10):
-            # NB disp controls output.
-            result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+        # NB disp controls output.
+        result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
 
         print(result.params[:-1].mean(), result.params[-1])
     
