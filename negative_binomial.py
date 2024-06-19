@@ -244,7 +244,7 @@ if __name__ == "__main__":
         for ii in range(nrepeat):            
             # NB disp controls output.
             result = fitter.fit(
-                start_params=params, disp=0, maxiter=1500, xtol=1e-6, ftol=1e-6
+                start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4
             )
 
         print(np.exp(result.params[:-1]), result.params[-1], fitter.nloglikeobs(result.params))
