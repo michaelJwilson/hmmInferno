@@ -69,7 +69,7 @@ class Weighted_NegativeBinomial2(GenericLikelihoodModel):
             start_params=start_params, maxiter=maxiter, maxfun=maxfun, **kwds
         )
 
-
+    
 def nu_sum_log_core(alpha, yi_max):
     result = np.zeros(yi_max)
 
@@ -151,14 +151,8 @@ if __name__ == "__main__":
 
     title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
 
-    p = mu / var
-    r = (mu * mu) / (var - mu)
-
-    assert (r, p) == convert_params(mu, np.sqrt(var))
-
-    # print(p, r)
-    # print(convert_params(mu, np.sqrt(var)))
-
+    (r, p) == convert_params(mu, np.sqrt(var))
+    
     # Sample from the negative binomial distribution
     samples = stats.nbinom.rvs(r, p, size=size)
 
