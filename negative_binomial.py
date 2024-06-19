@@ -115,8 +115,7 @@ def nu_sum_core(alpha, yi_max):
         result[nu] = nu / (1.0 + alpha * nu)
 
     return np.cumsum(result)
-
-
+"""
 def log_like(samples, alpha, mu):
     nn = len(samples)
     yis, cnts = np.unique(samples, return_counts=True)
@@ -138,43 +137,55 @@ def log_like(samples, alpha, mu):
     result -= (mean + 1.0 / alpha) * np.log(1.0 + alpha * mu)
 
     return result
+"""
 
-
-def dispersion_func(samples):
+def dispersion_func(samples, weights=None):
     nn = len(samples)
+
+    if weights is None:
+        weights = np.ones_like(samples)
+        
     yis, cnts = np.unique(samples, return_counts=True)
-    mean = (yis * cnts).sum() / nn
-    std = np.std(samples)
+
+    # NB Max. like. mean is the (weighted) sample mean.
+    mu = (samples * weights).sum() / weights.sum()
+
+    var = (weights * ((samples - mu)) ** 2.).sum() / weights.sum()
 
     max_yi = yis.max()
-    zeros = np.zeros_like(yis)
-
-    mu = mean
-    idx = np.maximum(zeros, (yis - 1)).tolist()
+    zeros = np.zeros_like(samples)
+    idx = np.maximum(zeros, (samples - 1)).tolist()
 
     def grad_func(alpha):
+        # NB sum over nu.
         nu_sums_complete = nu_sum_core(alpha, max_yi)
         nu_sums = nu_sums_complete[idx]
 
-        result = (cnts * nu_sums).sum() / nn
+        result = (weights * nu_sums).sum() / weights.sum()
         result += np.log(1.0 + alpha * mu) / alpha / alpha
-        result -= mu * (mean + 1.0 / alpha) / (1.0 + alpha * mu)
+        result -= mu * (mu + 1.0 / alpha) / (1.0 + alpha * mu)
 
         return result
 
-    return mean, std, grad_func
+    return mu, np.sqrt(var), grad_func
 
 
-def dispersion_minimas(samples):
+def dispersion_minimas(samples, weights=None, exposure=None, max_factor=10.0):
     dalpha = 1.0e-2
-    mean, std, grad_func = dispersion_func(samples)
+    mu, std, grad_func = dispersion_func(samples, weights=weights)
 
-    return root_scalar(grad_func, bracket=(dalpha, 10.0 * np.std(samples)))
+    alpha = root_scalar(grad_func, bracket=(dalpha, max_factor * std)).root
+    
+    # NB obs. counts are integers, we cannot normalise.                                                                                                                                                              
+    if exposure	is None:
+        exposure = np.ones_like(mu)
 
+    return mu / exposure, alpha
+        
 
 if __name__ == "__main__":
     # NB num. successes, prob. success., num_samples.
-    mu, var, size, nrepeat = 10, 20., 200, 10
+    mu, var, size, nrepeat = 10, 20., 200, 100
     alpha = (var - mu) / mu / mu
 
     print(mu, alpha)
@@ -195,12 +206,10 @@ if __name__ == "__main__":
     
     with ProfileContext() as context:
         for ii in range(nrepeat):
-            minima = dispersion_minimas(samples)
-
-        est_alpha, est_mu = minima.root, mean
+            params = dispersion_minimas(samples)
         
-        print(est_mu, est_alpha)
-
+        print(params)
+        
     # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
     #
     # pl.plot(alphas, vectorize(grad_func)(alphas))
@@ -239,5 +248,5 @@ if __name__ == "__main__":
             )
 
         print(np.exp(result.params[:-1]), result.params[-1], fitter.nloglikeobs(result.params))
-        
+
     print("\n\nDone.\n\n")
