@@ -50,6 +50,9 @@ def nu_sum_core(alpha, yi_max):
 
 
 def piegorsch_rootfunc(samples, weights=None):
+    """
+    TODO exog mus etc. 
+    """
     if weights is None:
         weights = np.ones_like(samples)
 
@@ -57,6 +60,8 @@ def piegorsch_rootfunc(samples, weights=None):
 
     # NB Max. like. mean is the (weighted) sample mean.
     mu = (samples * weights).sum() / weights.sum()
+
+    # NB sets upper limit on fitted alpha only.
     var = (weights * ((samples - mu)) ** 2.0).sum() / weights.sum()
 
     max_yi = yis.max()
