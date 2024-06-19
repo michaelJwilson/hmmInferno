@@ -4,8 +4,11 @@ import numpy as np
 import pylab as pl
 import scipy.stats as stats
 import statsmodels.api as sm
+import cProfile
+import pstats
+import io
 from numpy import vectorize
-from numba import njit
+from numba import njit, config, threading_layer, prange
 from scipy.optimize import root_scalar
 from statsmodels.base.model import GenericLikelihoodModel
 from calicost.utils_distribution_fitting import (
@@ -17,14 +20,37 @@ from calicost.utils_distribution_fitting import (
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
 """
 
+# set the threading layer before any parallel target compilation
+config.THREADING_LAYER = 'threadsafe'
+
 np.random.seed(420)
 
 
-class Weighted_NegativeBinomial2(GenericLikelihoodModel):
+class ProfileContext:    
+    def __enter__(self):
+        self.profiler = cProfile.Profile()
+        self.profiler.enable()
+        return self
+
+    def __exit__(self, *args):
+        self.profiler.disable()
+
+        ss = io.StringIO()
+        
+        ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
+        ps.print_stats()
+
+        profile = ss.getvalue()
+        
+        print(profile)
+        
+class Weighted_NegativeBinomial_Piegorsch(GenericLikelihoodModel):
     """
     Negative Binomial model endog ~ NB(exposure * exp(exog @ params[:-1]), params[-1]), where exog is the design matrix, and params[-1] is 1 / overdispersion.
     This function fits the NB params when samples are weighted by weights: max_{params} \sum_{s} weights_s * log P(endog_s | exog_s; params)
 
+    See https://www.jstor.org/stable/2532104?seq=1
+    
     Attributes
     ----------
     endog : array, (n_samples,)
@@ -41,7 +67,7 @@ class Weighted_NegativeBinomial2(GenericLikelihoodModel):
     """
 
     def __init__(self, endog, exog, weights, exposure, seed=0, **kwds):
-        super(Weighted_NegativeBinomial2, self).__init__(endog, exog, **kwds)
+        super(Weighted_NegativeBinomial_Piegorsch, self).__init__(endog, exog, **kwds)
 
         self.weights = weights
         self.exposure = exposure
@@ -65,15 +91,17 @@ class Weighted_NegativeBinomial2(GenericLikelihoodModel):
             else:
                 start_params = np.append(0.1 * np.ones(self.nparams), 0.01)
 
-        return super(Weighted_NegativeBinomial2, self).fit(
+        # super(Weighted_NegativeBinomial_Piegorsch, self)
+        return super().fit(
             start_params=start_params, maxiter=maxiter, maxfun=maxfun, **kwds
         )
 
-    
+
+@njit(cache=True, parallel=True, nopython=True)
 def nu_sum_log_core(alpha, yi_max):
     result = np.zeros(yi_max)
 
-    for nu in range(0, yi_max):
+    for nu in prange(0, yi_max):
         result[nu] = np.log(1.0 + alpha * nu)
 
     return np.cumsum(result)
@@ -134,46 +162,48 @@ def dispersion_func(samples):
 
         return result
 
-    return grad_func
+    return mean, std, grad_func
 
 
 def dispersion_minimas(samples):
     dalpha = 1.0e-2
-    bracket = [dalpha, 10.0 * np.std(samples)]
+    mean, std, grad_func = dispersion_func(samples)
 
-    grad_func = dispersion_func(samples)
-    return root_scalar(grad_func, bracket=bracket)
+    return root_scalar(grad_func, bracket=(dalpha, 10.0 * np.std(samples)))
 
 
 if __name__ == "__main__":
-    mu, var, size = 10, 25.0, 200  # num. successes, prob. success., num_samples.
+    # NB num. successes, prob. success., num_samples.
+    mu, var, size = 10, 25.0, 200
     alpha = (var - mu) / mu / mu
 
-    title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
-
-    (r, p) == convert_params(mu, np.sqrt(var))
+    print(mu, alpha)
     
-    # Sample from the negative binomial distribution
+    (r, p) = convert_params(mu, np.sqrt(var))
+
     samples = stats.nbinom.rvs(r, p, size=size)
 
-    grad_func = dispersion_func(samples)
+    mean, std, grad_func = dispersion_func(samples)
 
     dalpha = 1.0e-2
     alphas = dalpha + np.arange(0.0, 20.0, dalpha)
 
-    result = vectorize(grad_func)(alphas)
-
-    minima = dispersion_minimas(samples)
-    est_alpha, est_mu = minima.root, samples.mean()
-
-    pl.plot(alphas, result)
-    pl.axhline(0.0, c="k", lw=0.5, label=r"$\hat \mu=$" + f"{est_mu:.4f}")
-    pl.axvline(est_alpha, c="k", lw=0.5, label=r"$\hat \alpha=$" + f"{est_alpha:.4f}")
-    pl.legend(frameon=False)
-    pl.title(title)
+    with ProfileContext() as context:
+        minima = dispersion_minimas(samples)        
+        est_alpha, est_mu = minima.root, mean
+    
+        print(est_mu, est_alpha)
+        
+    # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
+    # 
+    # pl.plot(alphas, vectorize(grad_func)(alphas))
+    # pl.axhline(0.0, c="k", lw=0.5, label=r"$\hat \mu=$" + f"{est_mu:.4f}")
+    # pl.axvline(est_alpha, c="k", lw=0.5, label=r"$\hat \alpha=$" + f"{est_alpha:.4f}")
+    # pl.legend(frameon=False)
+    # pl.title(title)
     # pl.show()
-
-    fitter = Weighted_NegativeBinomial2(
+    """
+    fitter = Weighted_NegativeBinomial_Piegorsch(
         endog=samples,
         exog=np.diag(np.ones_like(samples)),
         weights=np.ones_like(samples),
@@ -183,12 +213,11 @@ if __name__ == "__main__":
     params = mu + np.sqrt(var) * np.random.normal(size=len(samples))
     params = np.concatenate((params, np.array([alpha])))
 
-    log_like = fitter.nloglikeobs(params)
+    # log_like = fitter.nloglikeobs(params)
 
-    # NB disp controls output.
-    result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
-
-    print(mu, alpha)
-    print(est_mu, est_alpha)
-    print(result.params[:-1].mean(), result.params[-1])
-    print("Done.")
+    with ProfileContext() as context:
+        # NB disp controls output.
+        result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+        print(result.params[:-1].mean(), result.params[-1])
+    """
+    print("\n\nDone.\n\n")
