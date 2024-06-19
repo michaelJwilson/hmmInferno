@@ -1,32 +1,32 @@
+import cProfile
+import io
+import pstats
+
 import numba
-import scipy
 import numpy as np
 import pylab as pl
+import scipy
+import timeit
 import scipy.stats as stats
 import statsmodels.api as sm
-import cProfile
-import pstats
-import io
+from calicost.utils_distribution_fitting import (Weighted_NegativeBinomial,
+                                                 convert_params)
+from numba import config, njit, prange, threading_layer
 from numpy import vectorize
-from numba import njit, config, threading_layer, prange
 from scipy.optimize import root_scalar
 from statsmodels.base.model import GenericLikelihoodModel
-from calicost.utils_distribution_fitting import (
-    Weighted_NegativeBinomial,
-    convert_params,
-)
 
 """                                                                                                                                                                  
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
 """
 
 # set the threading layer before any parallel target compilation
-config.THREADING_LAYER = 'threadsafe'
+config.THREADING_LAYER = "threadsafe"
 
 np.random.seed(420)
 
 
-class ProfileContext:    
+class ProfileContext:
     def __enter__(self):
         self.profiler = cProfile.Profile()
         self.profiler.enable()
@@ -36,21 +36,22 @@ class ProfileContext:
         self.profiler.disable()
 
         ss = io.StringIO()
-        
+
         ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
         ps.print_stats()
 
         profile = ss.getvalue()
-        
+
         print(profile)
-        
+
+
 class Weighted_NegativeBinomial_Piegorsch(GenericLikelihoodModel):
     """
     Negative Binomial model endog ~ NB(exposure * exp(exog @ params[:-1]), params[-1]), where exog is the design matrix, and params[-1] is 1 / overdispersion.
     This function fits the NB params when samples are weighted by weights: max_{params} \sum_{s} weights_s * log P(endog_s | exog_s; params)
 
     See https://www.jstor.org/stable/2532104?seq=1
-    
+
     Attributes
     ----------
     endog : array, (n_samples,)
@@ -178,7 +179,7 @@ if __name__ == "__main__":
     alpha = (var - mu) / mu / mu
 
     print(mu, alpha)
-    
+
     (r, p) = convert_params(mu, np.sqrt(var))
 
     samples = stats.nbinom.rvs(r, p, size=size)
@@ -189,20 +190,21 @@ if __name__ == "__main__":
     alphas = dalpha + np.arange(0.0, 20.0, dalpha)
 
     with ProfileContext() as context:
-        minima = dispersion_minimas(samples)        
+        for ii in range(1_000):
+            minima = dispersion_minimas(samples)
+
         est_alpha, est_mu = minima.root, mean
-    
         print(est_mu, est_alpha)
-        
+
     # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
-    # 
+    #
     # pl.plot(alphas, vectorize(grad_func)(alphas))
     # pl.axhline(0.0, c="k", lw=0.5, label=r"$\hat \mu=$" + f"{est_mu:.4f}")
     # pl.axvline(est_alpha, c="k", lw=0.5, label=r"$\hat \alpha=$" + f"{est_alpha:.4f}")
     # pl.legend(frameon=False)
     # pl.title(title)
     # pl.show()
-    """
+    
     fitter = Weighted_NegativeBinomial_Piegorsch(
         endog=samples,
         exog=np.diag(np.ones_like(samples)),
@@ -216,8 +218,10 @@ if __name__ == "__main__":
     # log_like = fitter.nloglikeobs(params)
 
     with ProfileContext() as context:
-        # NB disp controls output.
-        result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+        for ii in range(10):
+            # NB disp controls output.
+            result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
+
         print(result.params[:-1].mean(), result.params[-1])
-    """
+    
     print("\n\nDone.\n\n")
