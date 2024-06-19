@@ -22,11 +22,7 @@ from statsmodels.base.model import GenericLikelihoodModel
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
 """
 
-# set the threading layer before any parallel target compilation
-config.THREADING_LAYER = "threadsafe"
-
 np.random.seed(314)
-
 
 class ProfileContext:
     def __enter__(self):
@@ -43,7 +39,6 @@ class ProfileContext:
         ps.print_stats()
 
         profile = ss.getvalue()
-
         print(profile)
 
 
@@ -179,7 +174,7 @@ def dispersion_minimas(samples):
 
 if __name__ == "__main__":
     # NB num. successes, prob. success., num_samples.
-    mu, var, size, nrepeat = 10, 25.0, 2_000, 10
+    mu, var, size, nrepeat = 10, 20., 200, 10
     alpha = (var - mu) / mu / mu
 
     print(mu, alpha)
@@ -188,11 +183,16 @@ if __name__ == "__main__":
 
     samples = stats.nbinom.rvs(r, p, size=size)
 
+    # pl.plot(np.arange(size), samples, lw=0.0, c='k', marker='.')
+    # pl.axhline(mu, c='k', lw=0.5)
+    # pl.ylim(0.0, 30.0)
+    # pl.show()
+
     mean, std, grad_func = dispersion_func(samples)
 
     dalpha = 1.0e-2
     alphas = dalpha + np.arange(0.0, 20.0, dalpha)
-    """
+    
     with ProfileContext() as context:
         for ii in range(nrepeat):
             minima = dispersion_minimas(samples)
@@ -200,7 +200,7 @@ if __name__ == "__main__":
         est_alpha, est_mu = minima.root, mean
         
         print(est_mu, est_alpha)
-    """
+
     # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
     #
     # pl.plot(alphas, vectorize(grad_func)(alphas))
@@ -224,19 +224,20 @@ if __name__ == "__main__":
     )
 
     params = mu + np.sqrt(var) * np.random.normal(size=num_states)
-    params = np.concatenate((params, np.array([alpha])))
-
-    print(params)
+    params = np.concatenate((np.log(params), np.array([alpha])))
     
-    # log_like = fitter.nloglikeobs(params)
+    log_like = fitter.nloglikeobs(params)
+
+    # NB initialise
+    # print(np.exp(params[:-1]), params[-1], log_like)
     
     with ProfileContext() as context:
         for ii in range(nrepeat):            
             # NB disp controls output.
             result = fitter.fit(
-                start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4
+                start_params=params, disp=0, maxiter=1500, xtol=1e-6, ftol=1e-6
             )
 
-            print(result.params)
-    
+        print(np.exp(result.params[:-1]), result.params[-1], fitter.nloglikeobs(result.params))
+        
     print("\n\nDone.\n\n")
