@@ -212,15 +212,21 @@ if __name__ == "__main__":
         exposure=np.ones_like(samples),
     )
 
-    params = mu + np.sqrt(var) * np.random.normal(size=len(samples))
+    # NB
+    num_states = 10
+    
+    params = mu + np.sqrt(var) * np.random.normal(size=num_states)
     params = np.concatenate((params, np.array([alpha])))
 
-    # log_like = fitter.nloglikeobs(params)
+    log_like = fitter.nloglikeobs(params)
 
+    print(log_like)
+    
+    """
     with ProfileContext() as context:
         # NB disp controls output.
         result = fitter.fit(start_params=params, disp=0, maxiter=1500, xtol=1e-4, ftol=1e-4)
 
         print(result.params[:-1].mean(), result.params[-1])
-    
+    """
     print("\n\nDone.\n\n")
