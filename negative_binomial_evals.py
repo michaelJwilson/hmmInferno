@@ -86,7 +86,8 @@ def nu_log_sum(yis, inv_alphas):
 def log_like_v1(kk, nn, pp):
     """                                                                                                                                                                                                                                              
     Standard scipy, cannot be jitted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
-    NB n is the number of successes, p is the probability of success, k is # failures                                                                                                                                                                
+    NB n is the number of successes, p is the probability of success, k is # failures
+       See https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
     """
     return np.atleast_1d(nbinom.logpmf(kk, nn, pp))
 

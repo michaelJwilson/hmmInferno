@@ -120,18 +120,13 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
 
         n, p = convert_params(nb_mean, nb_std)
 
-        # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
-        # llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
         """
         assert -llf.dot(self.weights) == -log_like(self.endog, n, p, version="v1").dot(
             self.weights
         )
         assert np.allclose(-llf, -log_like(self.endog, n, p, version="v3"), rtol=1e-05, atol=1e-06)
         """
-        
-        llf = log_like(self.endog, n, p, version=version)
-
-        return -llf.dot(self.weights)
+        return -log_like(self.endog, n, p, version=version).dot(self.weights)
 
     def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
         self.exog_names.append("alpha")
@@ -206,7 +201,7 @@ if __name__ == "__main__":
         for ii in range(nrepeat):
             # NB disp controls output; method="bfgs"
             result = fitter.fit(
-                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-6, ftol=1e-6,
+                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-6, ftol=1e-6, method="bfgs"
             )
 
         print(
