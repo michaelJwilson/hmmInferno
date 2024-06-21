@@ -48,6 +48,14 @@ def nu_sum_core(alpha, yi_max):
 
     return np.cumsum(result)
 
+@njit(cache=True, parallel=True)
+def nu_log_sum_core(alpha, yi_max):
+    result = np.zeros(yi_max)
+
+    for nu in prange(0, yi_max):
+        result[nu] = np.log(1. + alpha * nu)
+
+    return np.cumsum(result)
 
 def piegorsch_rootfunc(samples, weights=None):
     """
@@ -63,7 +71,7 @@ def piegorsch_rootfunc(samples, weights=None):
 
     # NB sets upper limit on fitted alpha only.
     var = (weights * ((samples - mu)) ** 2.0).sum() / weights.sum()
-
+    
     max_yi = yis.max()
     zeros = np.zeros_like(samples)
     idx = np.maximum(zeros, (samples - 1)).tolist()
@@ -81,6 +89,30 @@ def piegorsch_rootfunc(samples, weights=None):
 
     return mu, np.sqrt(var), grad_func
 
+def log_like_piegorsch(samples, alpha, mu, weights=None):
+    if weights is None:
+        weights = np.ones_like(samples)
+
+    yis, cnts = np.unique(samples, return_counts=True)
+
+    # NB Max. like. mean is the (weighted) sample mean.                                                                                                                   
+    mu = (samples * weights).sum() / weights.sum()
+
+    # NB sets upper limit on fitted alpha only.                                                                                                                           
+    var = (weights * ((samples - mu)) ** 2.0).sum() / weights.sum()
+
+    max_yi = yis.max()
+    zeros = np.zeros_like(samples)
+    idx = np.maximum(zeros, (samples - 1)).tolist()
+
+    nu_log_sums_complete = nu_log_sum_core(alpha, max_yi)
+    nu_sums = nu_log_sums_complete[idx]
+
+    result = (weights * nu_sums).sum() / weights.sum()
+    result += mean * np.log(mu)
+    result -= (mean + 1. / alpha) * np.log(1. + alpha * mu)
+
+    return result
 
 class ProfileContext:
     def __enter__(self):
@@ -137,6 +169,7 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
 
         n, p = convert_params(nb_mean, nb_std)
 
+        # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
         llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
 
         return -llf.dot(self.weights)
@@ -186,12 +219,22 @@ if __name__ == "__main__":
         exposure=np.ones(num_states),
     )
 
+    log_like = log_like_piegorsch(samples, alpha, mu) - log_like_piegorsch(samples, alpha, 1.1 * mu)
+    print(log_like)
+
+    # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370                                                                         
+    log_like = -scipy.stats.nbinom.logpmf(samples, *convert_params(mu, np.sqrt(var))).sum()
+    log_like -= -scipy.stats.nbinom.logpmf(samples, *convert_params(1.1 * mu, np.sqrt(var))).sum()
+    
+    print(log_like)
+    
+    """
     with ProfileContext() as context:
         for ii in range(nrepeat):
             params = fitter.fit_piegorsch()
 
         print(params)
-
+    """
     # title = r"Truth $(\alpha, \mu)$=" + f"({mu:.2f}, {alpha:.2f})"
     #
     # dalpha = 1.0e-2
@@ -203,7 +246,7 @@ if __name__ == "__main__":
     # pl.legend(frameon=False)
     # pl.title(title)
     # pl.show()
-
+    """
     start_params = mu + np.sqrt(var) * np.random.normal(size=num_states)
     start_params = np.concatenate((np.log(start_params), np.array([alpha])))
 
@@ -211,9 +254,9 @@ if __name__ == "__main__":
 
     with ProfileContext() as context:
         for ii in range(nrepeat):
-            # NB disp controls output.
+            # NB disp controls output; method="bfgs"
             result = fitter.fit(
-                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-4, ftol=1e-4
+                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-6, ftol=1e-6, method="bfgs"
             )
 
         print(
@@ -221,5 +264,5 @@ if __name__ == "__main__":
             result.params[-1],
             fitter.nloglikeobs(result.params),
         )
-
+    """
     print("\n\nDone.\n\n")
