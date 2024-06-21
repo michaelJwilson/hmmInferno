@@ -2,6 +2,7 @@ import io
 import pstats
 import cProfile
 import numpy as np
+import scipy
 
 from math import gamma
 from scipy.stats import nbinom
@@ -10,7 +11,7 @@ from profile_context import ProfileContext
 
 @njit(cache=True, parallel=False)
 def factorial_scalar(nn, log=False):
-    result = 0 if log else 1
+    result = 0. if log else 1.
 
     if nn <= 1:
         return result
@@ -18,7 +19,6 @@ def factorial_scalar(nn, log=False):
     if log:
         for ii in prange(2, nn + 1):
             result += np.log(ii)
-        
     else:
         for ii in prange(2, nn + 1):
             result *= ii
@@ -34,10 +34,11 @@ def factorial_core(unique_fac, unique_nn, log=False):
 
 # NB no njit as return_inverse kwarg.
 def factorial(nn, log=False):
-    result = np.ones_like(nn)
     unique_nn, idx = np.unique(nn, return_inverse=True)
-    unique_fac = np.zeros_like(unique_nn)
+    unique_fac = np.zeros_like(unique_nn, dtype=float)
+    
     unique_fac = factorial_core(unique_fac, unique_nn, log=log)
+    
     return unique_fac[idx]
 
 def stirlings(arg, max_arg=None):
@@ -45,7 +46,7 @@ def stirlings(arg, max_arg=None):
     return approx. to log(n!)
     """
     arg = np.atleast_1d(arg)
-    result = np.zeros_like(arg)
+    result = np.zeros_like(arg, dtype=float)
 
     if max_arg is not None:
         isin = (arg > max_arg)
@@ -87,7 +88,7 @@ def log_like_v1(kk, nn, pp):
     Standard scipy, cannot be jitted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
     NB n is the number of successes, p is the probability of success, k is # failures                                                                                                                                                                
     """
-    return nbinom.logpmf(kk, nn, pp)
+    return np.atleast_1d(nbinom.logpmf(kk, nn, pp))
 
 def log_like_v2(kk, nn, pp):
     result = nn * np.log(pp) + kk * np.log(1.0 - pp)
@@ -125,6 +126,7 @@ if __name__ == "__main__":
     result = nu_log_sum(kk, nn)
 
     # print(exp, result[0])
+    # print(stirlings(kk), factorial(kk, log=True), np.log(scipy.special.factorial(kk)))
     
     with ProfileContext() as context:
         for ii in range(nrepeat):
