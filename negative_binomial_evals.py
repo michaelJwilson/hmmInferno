@@ -6,25 +6,7 @@ import numpy as np
 from math import gamma
 from scipy.stats import nbinom
 from numba import njit, prange
-
-class ProfileContext:
-    def __enter__(self):
-        self.profiler = cProfile.Profile()
-        self.profiler.enable()
-        return self
-
-    def __exit__(self, *args):
-        self.profiler.disable()
-
-        if True:
-            ss = io.StringIO()
-
-            ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
-            ps.print_stats()
-
-            profile = ss.getvalue()
-            print(profile)
-            
+from profile_context import ProfileContext
 
 def log_like_v1(kk, nn, pp):
     """

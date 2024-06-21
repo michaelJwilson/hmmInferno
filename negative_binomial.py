@@ -19,6 +19,7 @@ from numpy import vectorize
 from scipy.optimize import root_scalar
 from statsmodels.base.model import GenericLikelihoodModel
 from statsmodels.tools.sm_exceptions import ValueWarning
+from profile_context import ProfileContext
 
 """                                                                                                                                                                  
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
