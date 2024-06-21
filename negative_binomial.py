@@ -20,6 +20,7 @@ from scipy.optimize import root_scalar
 from statsmodels.base.model import GenericLikelihoodModel
 from statsmodels.tools.sm_exceptions import ValueWarning
 from profile_context import ProfileContext
+from negative_binomial_evals import log_like
 
 """                                                                                                                                                                  
 https://www.jstor.org/stable/2532104?seq=2                                                                                                                            
@@ -115,25 +116,6 @@ def log_like_piegorsch(samples, alpha, mu, weights=None):
 
     return result
 
-class ProfileContext:
-    def __enter__(self):
-        self.profiler = cProfile.Profile()
-        self.profiler.enable()
-        return self
-
-    def __exit__(self, *args):
-        self.profiler.disable()
-
-        if True:
-            ss = io.StringIO()
-
-            ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
-            ps.print_stats()
-
-            profile = ss.getvalue()
-            print(profile)
-
-
 class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
     """
     Negative Binomial model endog ~ NB(exposure * exp(exog @ params[:-1]), params[-1]), where exog is the design matrix, and params[-1] is 1 / overdispersion.
@@ -173,6 +155,10 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
         # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
         llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
 
+        # assert -llf.dot(self.weights) == -log_like(self.endog, n, p).dot(self.weights)
+
+        llf = log_like(self.endog, n, p, version="v2")
+        
         return -llf.dot(self.weights)
 
     def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
@@ -219,15 +205,6 @@ if __name__ == "__main__":
         weights=np.ones_like(samples),
         exposure=np.ones(num_states),
     )
-
-    log_like = log_like_piegorsch(samples, alpha, mu) - log_like_piegorsch(samples, alpha, 1.1 * mu)
-    print(log_like)
-
-    # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370                                                                         
-    log_like = -scipy.stats.nbinom.logpmf(samples, *convert_params(mu, np.sqrt(var))).sum()
-    log_like -= -scipy.stats.nbinom.logpmf(samples, *convert_params(1.1 * mu, np.sqrt(var))).sum()
-    
-    print(log_like)
     
     """
     with ProfileContext() as context:
@@ -247,7 +224,7 @@ if __name__ == "__main__":
     # pl.legend(frameon=False)
     # pl.title(title)
     # pl.show()
-    """
+    
     start_params = mu + np.sqrt(var) * np.random.normal(size=num_states)
     start_params = np.concatenate((np.log(start_params), np.array([alpha])))
 
@@ -257,7 +234,7 @@ if __name__ == "__main__":
         for ii in range(nrepeat):
             # NB disp controls output; method="bfgs"
             result = fitter.fit(
-                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-6, ftol=1e-6, method="bfgs"
+                start_params=start_params, disp=0, maxiter=1_500, xtol=1e-6, ftol=1e-6,
             )
 
         print(
@@ -265,5 +242,5 @@ if __name__ == "__main__":
             result.params[-1],
             fitter.nloglikeobs(result.params),
         )
-    """
+
     print("\n\nDone.\n\n")

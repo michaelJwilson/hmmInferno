@@ -11,7 +11,7 @@ class ProfileContext:
     def __exit__(self, *args):
         self.profiler.disable()
 
-        if True:
+        if False:
             ss = io.StringIO()
 
             ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
