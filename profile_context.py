@@ -3,7 +3,7 @@ import cProfile
 import pstats
 
 class ProfileContext:
-    def __init__(self, line_threshold=20):
+    def __init__(self, line_threshold=10):
         self.threshold = line_threshold
 
     def __enter__(self):

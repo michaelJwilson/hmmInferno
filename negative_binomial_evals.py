@@ -101,8 +101,7 @@ def log_like_v2(kk, nn, pp):
 
 def log_like_v3(kk, nn, pp):
     result = nn * np.log(pp) + kk * np.log(1.0 - pp)
-    result -= stirlings(kk)
-    
+    result -= stirlings(kk)    
     result += nu_log_sum(kk, nn)
     
     return result

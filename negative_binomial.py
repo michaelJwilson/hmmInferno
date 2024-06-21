@@ -113,7 +113,7 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
         self.exposure = exposure
         self.seed = seed
 
-    def nloglikeobs(self, params):
+    def nloglikeobs(self, params, version="v3"):
         # NB params == (mus, overdispersion)
         nb_mean = np.exp(self.exog @ params[:-1]) * self.exposure
         nb_std = np.sqrt(nb_mean + params[-1] * nb_mean**2)
@@ -121,23 +121,15 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
         n, p = convert_params(nb_mean, nb_std)
 
         # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
-        llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
-
-        print(self.endog, n, p)
-        # print(llf)
-        # print(log_like(self.endog, n, p, version="v3"))
-        exit(0)
-        
+        # llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
         """
         assert -llf.dot(self.weights) == -log_like(self.endog, n, p, version="v1").dot(
             self.weights
         )
-        assert -llf.dot(self.weights) == -log_like(self.endog, n, p, version="v3").dot(
-            self.weights
-        ), f"{llf} {-log_like(self.endog, n, p, version='v3').dot(self.weights)}"
+        assert np.allclose(-llf, -log_like(self.endog, n, p, version="v3"), rtol=1e-05, atol=1e-06)
         """
         
-        llf = log_like(self.endog, n, p, version="v3")
+        llf = log_like(self.endog, n, p, version=version)
 
         return -llf.dot(self.weights)
 
@@ -209,7 +201,7 @@ if __name__ == "__main__":
     start_params = np.concatenate((np.log(start_params), np.array([alpha])))
 
     start_log_like = fitter.nloglikeobs(start_params)
-    """
+
     with ProfileContext() as context:
         for ii in range(nrepeat):
             # NB disp controls output; method="bfgs"
@@ -222,5 +214,5 @@ if __name__ == "__main__":
             result.params[-1],
             fitter.nloglikeobs(result.params),
         )
-    """
+
     print("\n\nDone.\n\n")
