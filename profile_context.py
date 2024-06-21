@@ -3,6 +3,9 @@ import cProfile
 import pstats
 
 class ProfileContext:
+    def __init__(self, line_threshold=20):
+        self.threshold = line_threshold
+
     def __enter__(self):
         self.profiler = cProfile.Profile()
         self.profiler.enable()
@@ -11,11 +14,14 @@ class ProfileContext:
     def __exit__(self, *args):
         self.profiler.disable()
 
-        if False:
+        if True:
             ss = io.StringIO()
 
             ps = pstats.Stats(self.profiler, stream=ss).sort_stats("cumulative")
-            ps.print_stats()
+            ps.print_stats(self.threshold)
 
             profile = ss.getvalue()
-            print(profile)
+
+            # Only print if there's something to print
+            if profile.strip():
+                print(profile)

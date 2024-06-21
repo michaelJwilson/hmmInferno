@@ -157,7 +157,7 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
 
         # assert -llf.dot(self.weights) == -log_like(self.endog, n, p).dot(self.weights)
 
-        llf = log_like(self.endog, n, p, version="v2")
+        llf = log_like(self.endog, n, p, version="v3")
         
         return -llf.dot(self.weights)
 
