@@ -50,18 +50,10 @@ def nu_sum_core(alpha, yi_max):
 
     return np.cumsum(result)
 
-@njit(cache=True, parallel=True)
-def nu_log_sum_core(alpha, yi_max):
-    result = np.zeros(yi_max)
-
-    for nu in prange(0, yi_max):
-        result[nu] = np.log(1. + alpha * nu)
-
-    return np.cumsum(result)
 
 def piegorsch_rootfunc(samples, weights=None):
     """
-    TODO exog mus etc. 
+    TODO exog mus etc.
     """
     if weights is None:
         weights = np.ones_like(samples)
@@ -73,7 +65,7 @@ def piegorsch_rootfunc(samples, weights=None):
 
     # NB sets upper limit on fitted alpha only.
     var = (weights * ((samples - mu)) ** 2.0).sum() / weights.sum()
-    
+
     max_yi = yis.max()
     zeros = np.zeros_like(samples)
     idx = np.maximum(zeros, (samples - 1)).tolist()
@@ -91,30 +83,6 @@ def piegorsch_rootfunc(samples, weights=None):
 
     return mu, np.sqrt(var), grad_func
 
-def log_like_piegorsch(samples, alpha, mu, weights=None):
-    if weights is None:
-        weights = np.ones_like(samples)
-
-    yis, cnts = np.unique(samples, return_counts=True)
-
-    # NB Max. like. mean is the (weighted) sample mean.                                                                                                                   
-    mu = (samples * weights).sum() / weights.sum()
-
-    # NB sets upper limit on fitted alpha only.                                                                                                                           
-    var = (weights * ((samples - mu)) ** 2.0).sum() / weights.sum()
-
-    max_yi = yis.max()
-    zeros = np.zeros_like(samples)
-    idx = np.maximum(zeros, (samples - 1)).tolist()
-
-    nu_log_sums_complete = nu_log_sum_core(alpha, max_yi)
-    nu_sums = nu_log_sums_complete[idx]
-
-    result = (weights * nu_sums).sum() / weights.sum()
-    result += mean * np.log(mu)
-    result -= (mean + 1. / alpha) * np.log(1. + alpha * mu)
-
-    return result
 
 class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
     """
@@ -155,10 +123,22 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
         # NB https://github.com/scipy/scipy/blob/v1.12.0/scipy/stats/_discrete_distns.py#L264-L370
         llf = scipy.stats.nbinom.logpmf(self.endog, n, p)
 
-        # assert -llf.dot(self.weights) == -log_like(self.endog, n, p).dot(self.weights)
-
-        llf = log_like(self.endog, n, p, version="v3")
+        print(self.endog, n, p)
+        # print(llf)
+        # print(log_like(self.endog, n, p, version="v3"))
+        exit(0)
         
+        """
+        assert -llf.dot(self.weights) == -log_like(self.endog, n, p, version="v1").dot(
+            self.weights
+        )
+        assert -llf.dot(self.weights) == -log_like(self.endog, n, p, version="v3").dot(
+            self.weights
+        ), f"{llf} {-log_like(self.endog, n, p, version='v3').dot(self.weights)}"
+        """
+        
+        llf = log_like(self.endog, n, p, version="v3")
+
         return -llf.dot(self.weights)
 
     def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
@@ -205,7 +185,7 @@ if __name__ == "__main__":
         weights=np.ones_like(samples),
         exposure=np.ones(num_states),
     )
-    
+
     """
     with ProfileContext() as context:
         for ii in range(nrepeat):
@@ -224,12 +204,12 @@ if __name__ == "__main__":
     # pl.legend(frameon=False)
     # pl.title(title)
     # pl.show()
-    
+
     start_params = mu + np.sqrt(var) * np.random.normal(size=num_states)
     start_params = np.concatenate((np.log(start_params), np.array([alpha])))
 
     start_log_like = fitter.nloglikeobs(start_params)
-
+    """
     with ProfileContext() as context:
         for ii in range(nrepeat):
             # NB disp controls output; method="bfgs"
@@ -242,5 +222,5 @@ if __name__ == "__main__":
             result.params[-1],
             fitter.nloglikeobs(result.params),
         )
-
+    """
     print("\n\nDone.\n\n")

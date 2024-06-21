@@ -8,14 +8,6 @@ from scipy.stats import nbinom
 from numba import njit, prange
 from profile_context import ProfileContext
 
-
-def log_like_v1(kk, nn, pp):
-    """
-    Standard scipy, cannot be jitted.
-    """
-    return nbinom.logpmf(kk, nn, pp)
-
-
 @njit(cache=True)
 def factorial_scalar(nn):
     result = 1
@@ -28,7 +20,6 @@ def factorial_scalar(nn):
 
     return result
 
-
 @njit(cache=True, parallel=False)
 def factorial_core(unique_fac, unique_nn):
     for ii, un in enumerate(unique_nn):
@@ -36,15 +27,13 @@ def factorial_core(unique_fac, unique_nn):
 
     return unique_fac
 
-
-# NB should not be jitted as return_inverse kwarg.
+# NB no njit as return_inverse kwarg.
 def factorial(nn):
     result = np.ones_like(nn)
     unique_nn, idx = np.unique(nn, return_inverse=True)
     unique_fac = np.zeros_like(unique_nn)
     unique_fac = factorial_core(unique_fac, unique_nn)
     return unique_fac[idx]
-
 
 def stirlings(arg, max_arg=100_000):
     """
@@ -55,11 +44,13 @@ def stirlings(arg, max_arg=100_000):
 
     isin = arg > max_arg
 
+    # TODO HACK
+    isin[:] = False
+    
     result[isin] = arg[isin] * np.log(arg[isin]) - arg[isin]  # + O(ln arg)
     result[~isin] = np.log(factorial(arg[~isin]))
 
     return result
-
 
 @njit(cache=True, parallel=False)
 def nu_log_sum_core(yi, inv_alpha):
@@ -70,14 +61,12 @@ def nu_log_sum_core(yi, inv_alpha):
 
     return result
 
-
 @njit(cache=True, parallel=False)
 def nu_log_sum_core_vec(result, yis, inv_alphas):
     for ii, yi in enumerate(yis):
         result[ii] = nu_log_sum_core(yi, inv_alphas[ii])
 
     return result
-
 
 def nu_log_sum(yis, inv_alphas):
     yis = np.atleast_1d(yis)
@@ -88,11 +77,14 @@ def nu_log_sum(yis, inv_alphas):
 
     return nu_log_sum_core_vec(result, yis, inv_alphas)
 
+def log_like_v1(kk, nn, pp):
+    """                                                                                                                                                                                                                                              
+    Standard scipy, cannot be jitted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+    NB n is the number of successes, p is the probability of success, k is # failures                                                                                                                                                                
+    """
+    return nbinom.logpmf(kk, nn, pp)
 
 def log_like_v2(kk, nn, pp):
-    """
-    TODO must be vectorised.
-    """
     result = nn * np.log(pp) + kk * np.log(1.0 - pp)
     result += np.log(gamma(kk + nn))
     result -= np.log(gamma(nn))
@@ -100,13 +92,11 @@ def log_like_v2(kk, nn, pp):
 
     return result
 
-
 def log_like_v3(kk, nn, pp):
     result = nn * np.log(pp) + kk * np.log(1.0 - pp)
     result -= stirlings(kk)
     result += nu_log_sum(kk, nn)
     return result
-
 
 def log_like(kk, nn, pp, version="v1"):
     if version == "v1":
@@ -116,12 +106,12 @@ def log_like(kk, nn, pp, version="v1"):
     else:
         return log_like_v3(kk, nn, pp)
 
-
 if __name__ == "__main__":
     nrepeat, version = 1000, "v3"
 
-    kk, nn, pp = 20, 30, 0.25
-    kk, nn, pp = np.array([kk, kk]), np.array([nn, nn]), np.array([pp, pp])
+    # kk, nn, pp = 20, 30, 0.25
+    kk, nn, pp = 8, 10, 0.41118372
+    # kk, nn, pp = np.array([kk, kk]), np.array([nn, nn]), np.array([pp, pp])
 
     # exp = np.log(gamma(kk + nn) / gamma(nn))
     # result = nu_log_sum_core(kk, nn)
