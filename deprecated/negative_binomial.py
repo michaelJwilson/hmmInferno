@@ -128,7 +128,7 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
         """
         return -log_like(self.endog, n, p, version=version).dot(self.weights)
 
-    def fit(self, start_params=None, maxiter=10000, maxfun=5000, **kwds):
+    def fit(self, start_params=None, maxiter=10000, maxfun=5000, method="bfgs", **kwargs):
         self.exog_names.append("alpha")
 
         if start_params is None:
@@ -139,7 +139,7 @@ class Weighted_NegativeBinomial_v2(GenericLikelihoodModel):
 
         # super(Weighted_NegativeBinomial_Piegorsch, self)
         return super().fit(
-            start_params=start_params, maxiter=maxiter, maxfun=maxfun, **kwds
+            start_params=start_params, maxiter=maxiter, maxfun=maxfun, method=method, **kwargs
         )
 
     def fit_piegorsch(self, max_factor=10.0):
